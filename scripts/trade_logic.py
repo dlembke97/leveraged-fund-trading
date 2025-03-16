@@ -34,42 +34,60 @@ trading_config = {
     }
 }
 
+def get_available_cash():
+    """Retrieve available buying power (cash) from Alpaca."""
+    account = api.get_account()
+    return float(account.cash)  # Convert string to float for calculations
+
 def check_price_and_trade():
     """Check price levels and execute trades based on defined triggers."""
+
     for symbol, config in trading_config.items():
         current_price = get_current_price(symbol)
         if current_price is None:
             print(f"Skipping {symbol}, could not retrieve price.")
             continue
 
-        # Buy logic
-        for trigger in sorted(config["buy_triggers"], reverse=True):
-            if current_price <= trigger and trigger not in config["triggered_buy_levels"]:
-                if config["last_buy_price"] is None or current_price < config["last_buy_price"]:
-                    buy_stock(symbol, 200)
-                    config["last_buy_price"] = current_price
-                    config["triggered_buy_levels"].add(trigger)
-                    message = f"{symbol}: Buy ${200} at {trigger} with current price {current_price}"
-                    print(message)
-                    email_manager.send_trigger_alert(message)
-                    break  # Only one trade per cycle
-
-        # Sell logic
+        # Sell logic (Sell FNGA/TQQQ first, then buy into VTI/VXUS)
         for trigger in sorted(config["sell_triggers"]):
             if current_price >= trigger and trigger not in config["triggered_sell_levels"]:
-                sell_stock(symbol, 200)
+                sell_stock(symbol, 200)  # Sell FNGA or TQQQ
                 config["last_sell_price"] = current_price
                 config["triggered_sell_levels"].add(trigger)
-                message = f"{symbol}: Sell ${200} at {trigger} with current price {current_price}"
+
+                # Now reinvest in VTI/VXUS
+                reinvest_amount = 200
+                buy_stock("VTI", reinvest_amount * 0.8)
+                buy_stock("VXUS", reinvest_amount * 0.2)
+
+                message = f"{symbol}: Sell ${200} at {trigger} with current price {current_price} → Reinvested in VTI/VXUS"
                 print(message)
                 email_manager.send_trigger_alert(message)
-                
-                # After a sell, reset buy triggers for the next cycle
+
+                # Reset buy triggers after selling
                 config["triggered_buy_levels"].clear()
                 config["last_buy_price"] = None
                 config["triggered_sell_levels"].clear()
                 break  # Only one trade per cycle
 
+        # Buy logic (Check cash first, sell VTI/VXUS only if needed)
+        for trigger in sorted(config["buy_triggers"], reverse=True):
+            if current_price <= trigger and trigger not in config["triggered_buy_levels"]:
+                if config["last_buy_price"] is None or current_price < config["last_buy_price"]:
+                    # Need to sell VTI/VXUS first to free up funds
+                    sell_stock("VTI", 160)  # 80% of $200
+                    sell_stock("VXUS", 40)  # 20% of $200
+                    time.sleep(2)  # Allow time for the funds to settle
+
+                    # Now buy FNGA or TQQQ
+                    buy_stock(symbol, 200)
+                    config["last_buy_price"] = current_price
+                    config["triggered_buy_levels"].add(trigger)
+
+                    message = f"{symbol}: Buy ${200} at {trigger} with current price {current_price} → Sold VTI/VXUS first if needed"
+                    print(message)
+                    email_manager.send_trigger_alert(message)
+                    break  # Only one trade per cycle
 
 def get_current_price(symbol):
     """Fetch the latest available price, falling back to the last closing price if needed."""
@@ -137,3 +155,34 @@ def sell_stock(symbol, dollar_amount):
     reinvest_amount = dollar_amount
     buy_stock("VTI", reinvest_amount * 0.8)
     buy_stock("VXUS", reinvest_amount * 0.2)
+
+
+def get_position(symbol):
+    """Fetch position details for a specific stock symbol."""
+    try:
+        position = api.get_position(symbol)
+        return {
+            "symbol": position.symbol,
+            "qty": float(position.qty),
+            "market_value": float(position.market_value),
+            "avg_entry_price": float(position.avg_entry_price),
+            "unrealized_pl": float(position.unrealized_pl),
+        }
+    except Exception as e:
+        print(f"Error fetching position for {symbol}: {e}")
+        return None
+    
+def get_all_positions():
+    """Fetch all open positions from Alpaca."""
+    try:
+        positions = api.list_positions()  # <-- Use list_positions() instead
+        return [{ 
+            "symbol": pos.symbol, 
+            "qty": float(pos.qty), 
+            "market_value": float(pos.market_value),
+            "avg_entry_price": float(pos.avg_entry_price),
+            "unrealized_pl": float(pos.unrealized_pl),
+        } for pos in positions]
+    except Exception as e:
+        print(f"Error fetching positions: {e}")
+        return []
