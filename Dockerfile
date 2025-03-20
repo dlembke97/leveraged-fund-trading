@@ -11,7 +11,7 @@ RUN pip install pipenv
 COPY Pipfile Pipfile.lock ./
 
 # Install dependencies using Pipenv
-RUN pipenv install --deploy --ignore-pipfile
+RUN pipenv --python /usr/local/bin/python3.10 install --deploy --ignore-pipfile
 
 # Copy the rest of the application
 COPY . .
