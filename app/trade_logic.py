@@ -2,7 +2,7 @@ import time
 from alpaca_api import initialize_api
 from alpaca_trade_api.rest import TimeFrame
 import datetime
-from common_scripts import EmailManager
+from app.email_manager import EmailManager
 import os
 
 api = initialize_api()
