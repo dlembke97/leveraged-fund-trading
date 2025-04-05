@@ -27,7 +27,7 @@ class TradingEngine:
     def run(self):
         self.running = True
         while self.running:
-            print("Attempting check_price_and_trade")
+            print("Attempting check_price_and_trade.")
             try:
                 self.trade_logic.check_price_and_trade()
             except Exception as e:
