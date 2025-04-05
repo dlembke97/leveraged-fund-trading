@@ -1,0 +1,18 @@
+# frontend/fly.toml
+app = "leveraged-fund-trading-frontend"
+
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[env]
+  PORT = "8501"
+  # Set the API URL (change to your backend's production URL after deployment)
+  API_URL = "http://leveraged-fund-trading-backend.fly.dev"
+
+[[services]]
+  internal_port = 8501
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80

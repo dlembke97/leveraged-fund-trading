@@ -1,0 +1,19 @@
+# backend/Dockerfile
+FROM python:3.11-slim
+
+# Install Pipenv
+RUN pip install pipenv
+
+WORKDIR /app
+
+# Copy Pipfile and Pipfile.lock for dependency caching
+COPY Pipfile Pipfile.lock* ./
+
+# Install dependencies in the Pipenv environment
+RUN pipenv install --deploy --ignore-pipfile
+
+# Copy the application code
+COPY . .
+
+# Run the FastAPI application with uvicorn via Pipenv
+CMD ["pipenv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

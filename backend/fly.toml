@@ -1,0 +1,17 @@
+# backend/fly.toml
+app = "leveraged-fund-trading-backend"
+
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[env]
+  PORT = "8000"
+  # Set your secrets using fly.io CLI (e.g., flyctl secrets set SECRET_KEY=your_secret DATABASE_URL=your_db_url)
+
+[[services]]
+  internal_port = 8000
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
