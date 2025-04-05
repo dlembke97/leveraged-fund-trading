@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for leveraged-fund-trading on 2025-04-05T14:18:59-05:00
+# fly.toml app configuration file generated for leveraged-trading-test on 2025-04-05T15:31:05-05:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'leveraged-fund-trading'
+app = 'leveraged-trading-test'
 primary_region = 'ord'
 
 [build]
