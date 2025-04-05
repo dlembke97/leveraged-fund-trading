@@ -1,23 +1,20 @@
-# Use an official Python runtime as a base image
+# Dockerfile
 FROM python:3.11-slim
 
-# Set the working directory inside the container
 WORKDIR /app
 
-# Install pipenv
+# Install Pipenv
 RUN pip install pipenv
 
-# Copy Pipfile and Pipfile.lock
+# Copy Pipenv files and install dependencies
 COPY Pipfile Pipfile.lock ./
-
-# Install dependencies using Pipenv
 RUN pipenv install --deploy --ignore-pipfile
 
-# Copy the rest of the application
+# Copy the rest of the application code
 COPY . .
 
-# Set the working directory to where main.py is located
-WORKDIR /app/scripts
+# Expose port 8000 (adjust if needed)
+EXPOSE 8000
 
-# Run the bot
-CMD ["pipenv", "run", "python", "main.py"]
+# Command to run the FastAPI app with Uvicorn
+CMD ["pipenv", "run", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
