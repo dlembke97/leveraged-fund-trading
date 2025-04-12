@@ -10,6 +10,7 @@ alpaca-trade-api = "*"
 uvicorn = "*"
 fastapi = "*"
 sqlalchemy = "*"
+psycopg2-binary = "*"
 
 [dev-packages]
 
