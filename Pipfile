@@ -9,6 +9,7 @@ pyotp = "*"
 alpaca-trade-api = "*"
 uvicorn = "*"
 fastapi = "*"
+sqlalchemy = "*"
 
 [dev-packages]
 
