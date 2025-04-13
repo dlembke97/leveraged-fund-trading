@@ -3,6 +3,7 @@ import smtplib
 import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import logging
 
 class EmailManager:
     def __init__(self, sender_email, receiver_email, sender_password):
@@ -38,3 +39,18 @@ class EmailManager:
         result = self.send_email(subject, body)
         print(result)
         return result
+    
+def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    
+    # If the logger doesn't already have handlers (to avoid duplicate logs)
+    if not logger.hasHandlers():
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+    return logger
