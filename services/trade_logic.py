@@ -16,6 +16,17 @@ class TradeLogic:
         self.trading_config = trading_config
         self.email_manager = email_manager
 
+    @staticmethod
+    def is_market_open():
+        # Get the current Eastern Time using zoneinfo
+        now = datetime.datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            return False
+        # Construct market open and close times with today's date in Eastern Time
+        open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        return open_time <= now <= close_time
+
     def get_current_price(self, symbol):
         try:
             bars = list(self.api.get_bars(symbol, TimeFrame.Minute, limit=1))
