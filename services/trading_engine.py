@@ -1,8 +1,10 @@
-# services/trading_engine.py
 import time
 from services.alpaca_api import AlpacaAPI
 from services.trade_logic import TradeLogic
-from services.common_scripts import EmailManager
+from services.common_scripts import EmailManager, setup_logger
+
+# Set up a logger for this module
+logger = setup_logger(__name__)
 
 class TradingEngine:
     def __init__(self, user_id, alpaca_api_key, alpaca_api_secret, trading_config, email_config):
@@ -27,11 +29,10 @@ class TradingEngine:
     def run(self):
         self.running = True
         while self.running:
-            print("Attempting check_price_and_trade.")
             try:
                 self.trade_logic.check_price_and_trade()
             except Exception as e:
-                print(f"[{self.user_id}] Error: {e}")
+                logger.error(f"[{self.user_id}] Error during trading cycle: {e}", exc_info=True)
             time.sleep(60)  # Trading cycle interval
 
     def stop(self):

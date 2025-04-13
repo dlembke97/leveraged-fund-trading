@@ -1,7 +1,14 @@
-# services/trade_logic.py
 import time
 from alpaca_trade_api.rest import TimeFrame
 import datetime
+from datetime import time  # Note: If you don't need this, you can remove it.
+from zoneinfo import ZoneInfo
+
+from services.common_scripts import setup_logger
+
+# Create a logger for this module
+logger = setup_logger(__name__)
+
 
 class TradeLogic:
     def __init__(self, api, trading_config, email_manager):
@@ -9,11 +16,22 @@ class TradeLogic:
         self.trading_config = trading_config
         self.email_manager = email_manager
 
+    @staticmethod
+    def is_market_open():
+        # Get the current Eastern Time using zoneinfo
+        now = datetime.datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            return False
+        # Construct market open and close times with today's date in Eastern Time
+        open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        return open_time <= now <= close_time
+
     def get_current_price(self, symbol):
         try:
             bars = list(self.api.get_bars(symbol, TimeFrame.Minute, limit=1))
         except Exception:
-            print(f"Minute data not available for {symbol}, trying daily data.")
+            logger.warning(f"Minute data not available for {symbol}, trying daily data.")
             bars = []
 
         if bars and bars[0]:
@@ -27,14 +45,16 @@ class TradeLogic:
             elif today.weekday() == 5:  # Saturday
                 last_trading_day = today - datetime.timedelta(days=1)
 
-            bars = list(self.api.get_bars(symbol, TimeFrame.Day, start=last_trading_day.isoformat(), limit=1))
+            bars = list(
+                self.api.get_bars(symbol, TimeFrame.Day, start=last_trading_day.isoformat(), limit=1)
+            )
             if bars:
                 return bars[0].c
             else:
-                print(f"No historical data found for {symbol}.")
+                logger.info(f"No historical data found for {symbol}.")
                 return None
         except Exception as e:
-            print(f"Error fetching price for {symbol}: {e}")
+            logger.error(f"Error fetching price for {symbol}: {e}", exc_info=True)
             return None
 
     def buy_stock(self, symbol, dollar_amount):
@@ -46,7 +66,7 @@ class TradeLogic:
             type='market',
             time_in_force='day'
         )
-        print(f"Bought ${dollar_amount} of {symbol} at {price}.")
+        logger.info(f"Bought ${dollar_amount} of {symbol} at {price}.")
 
     def sell_stock(self, symbol, dollar_amount):
         price = self.get_current_price(symbol)
@@ -57,7 +77,7 @@ class TradeLogic:
             type='market',
             time_in_force='day'
         )
-        print(f"Sold ${dollar_amount} of {symbol} at {price}.")
+        logger.info(f"Sold ${dollar_amount} of {symbol} at {price}.")
 
         # Reinvest proceeds (80% VTI, 20% VXUS)
         reinvest_amount = dollar_amount
@@ -65,10 +85,13 @@ class TradeLogic:
         self.buy_stock("VXUS", reinvest_amount * 0.2)
 
     def check_price_and_trade(self):
+        if not self.is_market_open():
+            logger.info("Market is closed. Skipping trading cycle.")
+            return
         for symbol, config in self.trading_config.items():
             current_price = self.get_current_price(symbol)
             if current_price is None:
-                print(f"Skipping {symbol}, could not retrieve price.")
+                logger.info(f"Skipping {symbol}, could not retrieve price.")
                 continue
 
             # Sell logic: Sell FNGA/TQQQ and reinvest in VTI/VXUS
@@ -83,7 +106,7 @@ class TradeLogic:
                     self.buy_stock("VXUS", 200 * 0.2)
 
                     message = f"{symbol}: Sell $200 at {trigger} with current price {current_price} → Reinvested in VTI/VXUS"
-                    print(message)
+                    logger.info(message)
                     self.email_manager.send_trigger_alert(message)
 
                     config["triggered_buy_levels"].clear()
@@ -102,6 +125,6 @@ class TradeLogic:
                         config["last_buy_price"] = current_price
                         config["triggered_buy_levels"].add(trigger)
                         message = f"{symbol}: Buy $200 at {trigger} with current price {current_price} → Sold VTI/VXUS first if needed"
-                        print(message)
+                        logger.info(message)
                         self.email_manager.send_trigger_alert(message)
                         break
