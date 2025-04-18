@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from db.database import SessionLocal, init_db, User
 from services.trading_engine import TradingEngine, engines
 from services.admin import router as admin_router
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI()
 # Mount the admin router
