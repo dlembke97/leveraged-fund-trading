@@ -6,9 +6,11 @@ import uuid
 from sqlalchemy.orm import Session
 from db.database import SessionLocal, init_db, User
 from services.trading_engine import TradingEngine, engines
+from services.admin import router as admin_router
 
 app = FastAPI()
-
+# Mount the admin router
+app.include_router(admin_router, prefix="/admin", tags=["admin"])
 # Run database initialization on startup
 @app.on_event("startup")
 def startup_event():
