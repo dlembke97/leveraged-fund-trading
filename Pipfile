@@ -11,6 +11,7 @@ uvicorn = "*"
 sqlalchemy = "*"
 psycopg2-binary = "*"
 fastapi = {extras = ["all"], version = "*"}
+pandas-market-calendars = "*"
 
 [dev-packages]
 

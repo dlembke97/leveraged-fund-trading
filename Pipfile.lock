@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "1414d93c26d9f9279c00ba5943f30a1ec5b407c59b6f53166e6ce043187fc209"
+            "sha256": "4152ffca86f97f0654efecd06a609faeddcaf9603d509f1ab031a218b3a7bcba"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -295,6 +295,14 @@
             ],
             "version": "==2.2.0"
         },
+        "exchange-calendars": {
+            "hashes": [
+                "sha256:3f25007e934c7e8c6f0fd43f4fd7959e64505f8aa6b1eb4d6c5da71ab8af054b",
+                "sha256:f2fbc3696b334db7bb5cc786dc77ae4d48b00dccfbb55fcb2ca3ea2a88b8886e"
+            ],
+            "markers": "python_version ~= '3.10'",
+            "version": "==4.10"
+        },
         "fastapi": {
             "extras": [
                 "all"
@@ -579,6 +587,13 @@
                 "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
             ],
             "version": "==3.1.6"
+        },
+        "korean-lunar-calendar": {
+            "hashes": [
+                "sha256:392757135c492c4f42a604e6038042953c35c6f449dda5f27e3f86a7f9c943e5",
+                "sha256:eb2c485124a061016926bdea6d89efdf9b9fdbf16db55895b6cf1e5bec17b857"
+            ],
+            "version": "==0.3.1"
         },
         "markdown-it-py": {
             "hashes": [
@@ -1002,6 +1017,15 @@
             "markers": "python_version >= '3.9'",
             "version": "==2.2.3"
         },
+        "pandas-market-calendars": {
+            "hashes": [
+                "sha256:8780dd93f7f7d2d92ef40516cc77f00e20a9842bc564442b5c79b74a5591f3cc",
+                "sha256:9cf2fb3891892720f7e5ad065152798f63f5511cbb1165de2aa0305f16544e9f"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.8'",
+            "version": "==5.0.0"
+        },
         "propcache": {
             "hashes": [
                 "sha256:050b571b2e96ec942898f8eb46ea4bfbb19bd5502424747e83badc2d4a99a44e",
@@ -1316,6 +1340,14 @@
             "markers": "python_version >= '3.8'",
             "version": "==2.19.1"
         },
+        "pyluach": {
+            "hashes": [
+                "sha256:9063a25387cd7624276fd0656508bada08aa8a6f22e8db352844cd858e69012b",
+                "sha256:d1eb49d6292087e9290f4661ae01b60c8c933704ec8c9cef82673b349ff96adf"
+            ],
+            "markers": "python_version >= '3.7'",
+            "version": "==2.2.0"
+        },
         "pyotp": {
             "hashes": [
                 "sha256:346b6642e0dbdde3b4ff5a930b664ca82abfa116356ed48cc42c7d6590d36f63",
@@ -1532,6 +1564,14 @@
             ],
             "markers": "python_version >= '3.9'",
             "version": "==0.46.2"
+        },
+        "toolz": {
+            "hashes": [
+                "sha256:292c8f1c4e7516bf9086f8850935c799a874039c8bcf959d47b600e4c44a6236",
+                "sha256:2c86e3d9a04798ac556793bced838816296a2f085017664e4995cb40a1047a02"
+            ],
+            "markers": "python_version >= '3.8'",
+            "version": "==1.0.0"
         },
         "typer": {
             "hashes": [
