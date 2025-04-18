@@ -8,9 +8,9 @@ python-dotenv = "*"
 pyotp = "*"
 alpaca-trade-api = "*"
 uvicorn = "*"
-fastapi = "*"
 sqlalchemy = "*"
 psycopg2-binary = "*"
+fastapi = {extras = ["all"], version = "*"}
 
 [dev-packages]
 

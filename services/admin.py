@@ -1,6 +1,7 @@
 # services/admin.py
 import os
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from db.database import SessionLocal, User
@@ -9,8 +10,8 @@ from services.common_scripts import setup_logger
 router = APIRouter()
 logger = setup_logger(__name__)
 
-# Read the ADMIN_TOKEN from env (set via fly secrets or .env)
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+bearer_scheme = HTTPBearer()    # ← our security scheme
 
 def get_db():
     db = SessionLocal()
@@ -20,14 +21,10 @@ def get_db():
         db.close()
 
 def get_current_admin_user(
-    authorization: str = Header(..., description="Bearer <ADMIN_TOKEN>")
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)
 ):
-    """
-    Expects an HTTP header:
-      Authorization: Bearer <your-admin-token>
-    """
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or token != ADMIN_TOKEN:
+    token = credentials.credentials
+    if token != ADMIN_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authorized",
