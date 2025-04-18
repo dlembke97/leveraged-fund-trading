@@ -5,8 +5,11 @@ from zoneinfo import ZoneInfo
 from alpaca_trade_api.rest import TimeFrame, APIError
 
 from services.common_scripts import setup_logger
+import pandas_market_calendars as mcal
 
 logger = setup_logger(__name__)
+
+NYSE = mcal.get_calendar("NYSE")
 
 class TradeLogic:
     def __init__(self, api, trading_config, email_manager):
@@ -16,11 +19,18 @@ class TradeLogic:
 
     @staticmethod
     def is_market_open():
+        # Current time in Eastern
         now = datetime.datetime.now(ZoneInfo("America/New_York"))
-        if now.weekday() >= 5:
+        today = now.date()
+
+        # Fetch today’s NYSE schedule (empty on holidays & weekends)
+        schedule = NYSE.schedule(start_date=today, end_date=today)
+        if schedule.empty:
             return False
-        open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
+
+        # Check against actual open/close times
+        open_time  = schedule.at[today, "market_open"].to_pydatetime()
+        close_time = schedule.at[today, "market_close"].to_pydatetime()
         return open_time <= now <= close_time
 
     def wait_for_fill(self, order_id, poll_interval=0.5):
