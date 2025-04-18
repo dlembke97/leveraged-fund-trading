@@ -1,16 +1,16 @@
 # services/admin.py
-
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 
 from db.database import SessionLocal, User
 from services.common_scripts import setup_logger
-import os
-
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 router = APIRouter()
 logger = setup_logger(__name__)
+
+# Read the ADMIN_TOKEN from env (set via fly secrets or .env)
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 def get_db():
     db = SessionLocal()
@@ -19,13 +19,20 @@ def get_db():
     finally:
         db.close()
 
-def get_current_admin_user(token: str = Depends(...)):
+def get_current_admin_user(
+    authorization: str = Header(..., description="Bearer <ADMIN_TOKEN>")
+):
     """
-    Replace this stub with your real auth logic.
-    For example, read an API key header or verify a JWT.
+    Expects an HTTP header:
+      Authorization: Bearer <your-admin-token>
     """
-    if token != ADMIN_TOKEN:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authorized")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or token != ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return {"username": "admin"}
 
 @router.get("/users", summary="List all registered users")
@@ -34,14 +41,15 @@ def list_users(
     admin=Depends(get_current_admin_user),
 ):
     users = db.query(User).all()
-    result = []
-    for u in users:
-        result.append({
+    result = [
+        {
             "user_id": u.user_id,
             "username": u.username,
             "email": u.email,
             "sender_email": u.sender_email,
             "receiver_email": u.receiver_email,
-        })
+        }
+        for u in users
+    ]
     logger.info(f"Admin fetched {len(result)} users")
     return result
