@@ -12,6 +12,7 @@ sqlalchemy = "*"
 psycopg2-binary = "*"
 fastapi = {extras = ["all"], version = "*"}
 pandas-market-calendars = "*"
+boto3 = "*"
 
 [dev-packages]
 
