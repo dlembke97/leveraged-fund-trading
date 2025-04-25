@@ -6,6 +6,7 @@ on:
     #   - main
     paths:
       - 'layer/**'
+      - '.github/workflows/build-layer.yml'         # when this workflow changes
   workflow_dispatch:
 
 jobs:
