@@ -37,7 +37,7 @@ jobs:
           zip -r ../layer.zip python
 
       - name: Upload layer artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: python3-11-layer
           path: layer.zip
