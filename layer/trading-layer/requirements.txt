@@ -1,2 +1,3 @@
-alpaca-trade-api
-aiohttp
+alpaca-trade-api==3.2.0
+aiohttp==3.11.17
+websockets>=8.0,<10
