@@ -1,0 +1,4 @@
+alpaca-trade-api
+aiohttp
+async-timeout
+websockets

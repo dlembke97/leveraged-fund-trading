@@ -1,17 +1,72 @@
-name: Build & Release Lambda Layer
+name: Build & Release Lambda Layers
 
 on:
   push:
     # branches:
-    #   - main
+    #   - main                                       # limit to default branch :contentReference[oaicite:6]{index=6}
     paths:
-      - 'layer/**'
-      - '.github/workflows/build-layer.yml'         # when this workflow changes
-  workflow_dispatch:
+      - 'layer/trading-layer/**'                   # trading dependencies changes :contentReference[oaicite:7]{index=7}
+      - 'layer/data-layer/**'                      # data dependencies changes :contentReference[oaicite:8]{index=8}
+      - '.github/workflows/build-layers.yml'       # workflow file updates :contentReference[oaicite:9]{index=9}
+  workflow_dispatch:                              # manual trigger allowed :contentReference[oaicite:10]{index=10}
 
 jobs:
-  build-and-release:
+  trading-layer:
+    name: Build & Publish Trading Layer
+    runs-on: ubuntu-latest                         # GitHub-hosted runner :contentReference[oaicite:11]{index=11}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4                  # checkout action :contentReference[oaicite:12]{index=12}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5              # Python setup action :contentReference[oaicite:13]{index=13}
+        with:
+          python-version: '3.11'
+
+      - name: Upgrade pip, setuptools & wheel
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install trading dependencies into layer
+        run: |
+          pip install \
+            --no-cache-dir \
+            --only-binary=:all: \
+            --target layer/trading-layer/python/lib/python3.11/site-packages \
+            -r layer/trading-layer/requirements.txt
+
+      - name: Zip trading layer directory
+        run: |
+          cd layer/trading-layer
+          zip -r ../../trading-layer.zip python
+
+      - name: Publish Trading Layer to AWS Lambda
+        id: publish-trading
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          TRADING_ARN=$(aws lambda publish-layer-version \
+            --layer-name trading-layer \
+            --description "Trading API dependencies" \
+            --zip-file fileb://trading-layer.zip \
+            --compatible-runtimes python3.11 \
+            --query 'LayerVersionArn' \
+            --output text)                         # publish-layer-version API :contentReference[oaicite:14]{index=14}
+          echo "::set-output name=arn::$TRADING_ARN"
+
+      - name: Upload trading layer artifact
+        uses: actions/upload-artifact@v4            # artifact action (v4) :contentReference[oaicite:15]{index=15}
+        with:
+          name: trading-layer
+          path: trading-layer.zip
+
+  data-layer:
+    name: Build & Publish Data Layer
     runs-on: ubuntu-latest
+    needs: trading-layer                           # build after trading-layer :contentReference[oaicite:16]{index=16}
 
     steps:
       - name: Check out code
@@ -22,44 +77,52 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Upgrade pip, setuptools & wheel       # <-- Insert upgrade here
+      - name: Upgrade pip, setuptools & wheel
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
-      - name: Install dependencies into layer
+      - name: Install data dependencies into layer
         run: |
           pip install \
-            --target layer/python/lib/python3.11/site-packages \
-            -r layer/requirements.txt
+            --no-cache-dir \
+            --only-binary=:all: \
+            --target layer/data-layer/python/lib/python3.11/site-packages \
+            -r layer/data-layer/requirements.txt
 
-      - name: Zip the layer directory
+      - name: Zip data layer directory
         run: |
-          cd layer
-          zip -r ../layer.zip python
+          cd layer/data-layer
+          zip -r ../../data-layer.zip python
 
-      - name: Upload layer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: python3-11-layer
-          path: layer.zip
-
-      - name: Publish to AWS Lambda Layer
-        id: publish-layer
+      - name: Publish Data Layer to AWS Lambda
+        id: publish-data
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          LAYER_ARN=$(aws lambda publish-layer-version \
-            --layer-name my-python3-11-deps \
-            --description "Dependencies for Python 3.11" \
-            --zip-file fileb://layer.zip \
+          DATA_ARN=$(aws lambda publish-layer-version \
+            --layer-name data-layer \
+            --description "Market data dependencies" \
+            --zip-file fileb://data-layer.zip \
             --compatible-runtimes python3.11 \
             --query 'LayerVersionArn' \
-            --output text)
-          echo "::set-output name=layer_arn::$LAYER_ARN"
+            --output text)                         # publish-layer-version API :contentReference[oaicite:17]{index=17}
+          echo "::set-output name=arn::$DATA_ARN"
 
-      - name: Attach Layer to Lambda Function
+      - name: Upload data layer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-layer
+          path: data-layer.zip
+
+  attach-layers:
+    name: Attach Layers to Lambda Function
+    runs-on: ubuntu-latest
+    needs: [trading-layer, data-layer]              # depends on both layer builds
+
+    steps:
+      - name: Update function configuration
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -67,4 +130,6 @@ jobs:
         run: |
           aws lambda update-function-configuration \
             --function-name MyFunction \
-            --layers ${{ steps.publish-layer.outputs.layer_arn }}
+            --layers \
+              ${{ needs.trading-layer.outputs.arn }} \
+              ${{ needs.data-layer.outputs.arn }}      # update-function-configuration API :contentReference[oaicite:18]{index=18}
