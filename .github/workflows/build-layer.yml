@@ -28,21 +28,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
-          - name: Install Alpaca REST client without streaming deps
-          run: |
-            python -m pip install --upgrade pip setuptools wheel
-  
-            # Install alpaca-trade-api REST client only, ignoring its embedded deps:
-            pip install \
-              --no-deps \
-              --target layer/trading-layer/python/lib/python3.11/site-packages \
-              alpaca-trade-api==3.2.0                                    # :contentReference[oaicite:6]{index=6}
-  
-            # Manually install the minimal runtime deps that have compatible wheels:
-            pip install \
-              --no-cache-dir \
-              --target layer/trading-layer/python/lib/python3.11/site-packages \
-              aiohttp==3.11.17 msgpack==1.0.3 requests==2.32.3 urllib3==1.26.20  # :contentReference[oaicite:7]{index=7}
+      - name: Install Alpaca REST client without streaming deps
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+          # Install alpaca-trade-api REST client only, ignoring its embedded deps:
+          pip install \
+            --no-deps \
+            --target layer/trading-layer/python/lib/python3.11/site-packages \
+            alpaca-trade-api==3.2.0                                    # :contentReference[oaicite:6]{index=6}
+
+          # Manually install the minimal runtime deps that have compatible wheels:
+          pip install \
+            --no-cache-dir \
+            --target layer/trading-layer/python/lib/python3.11/site-packages \
+            aiohttp==3.11.17 msgpack==1.0.3 requests==2.32.3 urllib3==1.26.20  # :contentReference[oaicite:7]{index=7}
 
       - name: Zip trading layer directory
         run: |
