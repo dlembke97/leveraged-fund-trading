@@ -1,3 +1,8 @@
-alpaca-trade-api==3.2.0
-aiohttp==3.11.17
-websockets>=8.0,<10
+# Core REST client (streaming deps skipped via --no-deps in CI)
+alpaca-trade-api==3.2.0        :contentReference[oaicite:0]{index=0}
+
+# Minimal runtime dependencies pulled in by the Alpaca REST code
+aiohttp==3.11.17               :contentReference[oaicite:1]{index=1}
+msgpack==1.0.3                 :contentReference[oaicite:2]{index=2}
+requests==2.32.3               :contentReference[oaicite:3]{index=3}
+urllib3==1.26.20               :contentReference[oaicite:4]{index=4}
