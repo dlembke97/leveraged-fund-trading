@@ -63,7 +63,7 @@ jobs:
 
       - name: Package Lambda function code
         run: |
-          cd lambda-bot
+          cd lambda_bot
           zip -r ../function.zip .
 
       - name: Update Lambda function code
