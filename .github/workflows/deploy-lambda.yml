@@ -37,7 +37,9 @@ jobs:
           find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
 
       - name: Package Lambda layer
-        run: zip -r layer.zip layer
+        run: |
+          cd layer
+          zip -r ../layer.zip python
 
       - name: Upload layer.zip to S3
         run: aws s3 cp layer.zip s3://$LAYER_BUCKET/layer.zip
