@@ -1,0 +1,53 @@
+# .github/workflows/publish-layer.yml
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Publish Trading Bot Layer
+
+on:
+  push:
+
+jobs:
+  build-layer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11.9'
+
+      - name: Install layer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          mkdir -p layer/python
+          pip install alpaca-trade-api pandas_market_calendars -t layer/python
+
+      - name: Package Lambda layer
+        run: zip -r layer.zip layer
+
+      - name: Publish new Lambda layer version
+        id: publish_layer
+        run: |
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name trading-bot-deps \
+            --description "Dependencies for trading bot (alpaca + market cal)" \
+            --license-info "MIT" \
+            --zip-file fileb://layer.zip \
+            --compatible-runtimes python3.11 \
+            --output text \
+            --query LayerVersionArn)
+          echo "layerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
+
+          - name: Output new layer ARN
+          run: |
+            echo "Published layer: ${{ steps.publish_layer.outputs.layerArn }}"
+  
