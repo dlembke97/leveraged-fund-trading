@@ -72,13 +72,18 @@ jobs:
             --function-name $FUNCTION_NAME \
             --zip-file fileb://function.zip
 
-      - name: Wait for code update to finish
+      - name: Attach new layer to Lambda function (with retry)
         run: |
-          aws lambda wait function-active \
-            --function-name $FUNCTION_NAME
-            
-      - name: Attach new layer to Lambda function
-        run: |
-          aws lambda update-function-configuration \
-            --function-name $FUNCTION_NAME \
-            --layers ${{ steps.publish_layer.outputs.layerArn }}
+          LAYER_ARN=${{ steps.publish_layer.outputs.layerArn }}
+          for i in {1..6}; do
+            echo "Attempt $i to attach layer…"
+            if aws lambda update-function-configuration \
+                 --function-name $FUNCTION_NAME \
+                 --layers $LAYER_ARN; then
+              echo "✔ Layer attached."
+              break
+            else
+              echo "⚠️ Conflict, retrying in 10s…"
+              sleep 10
+            fi
+          done
