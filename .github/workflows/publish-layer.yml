@@ -1,6 +1,4 @@
-# .github/workflows/publish-layer.yml
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-
 name: Publish Trading Bot Layer
 
 on:
@@ -20,7 +18,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Set up Python
+      - name: Set up Python 3.11.9
         uses: actions/setup-python@v4
         with:
           python-version: '3.11.9'
@@ -29,25 +27,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           mkdir -p layer/python
-          pip install alpaca-trade-api pandas_market_calendars -t layer/python
+          pip install --no-cache-dir alpaca-trade-api pandas_market_calendars -t layer/python
+          # remove unnecessary metadata to slim zip
+          find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
 
       - name: Package Lambda layer
         run: zip -r layer.zip layer
 
-      - name: Publish new Lambda layer version
+      - name: Upload layer.zip to S3
+        run: |
+          aws s3 cp layer.zip s3://${{ secrets.LAYER_S3_BUCKET }}/layer.zip
+
+      - name: Publish new Lambda layer version from S3
         id: publish_layer
         run: |
           LAYER_ARN=$(aws lambda publish-layer-version \
             --layer-name trading-bot-deps \
             --description "Dependencies for trading bot (alpaca + market cal)" \
             --license-info "MIT" \
-            --zip-file fileb://layer.zip \
+            --content S3Bucket=${{ secrets.LAYER_S3_BUCKET }},S3Key=layer.zip \
             --compatible-runtimes python3.11 \
             --output text \
             --query LayerVersionArn)
           echo "layerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
 
-          - name: Output new layer ARN
-          run: |
-            echo "Published layer: ${{ steps.publish_layer.outputs.layerArn }}"
-  
+      - name: Output new layer ARN
+        run: |
+          echo "Published layer: ${{ steps.publish_layer.outputs.layerArn }}"
