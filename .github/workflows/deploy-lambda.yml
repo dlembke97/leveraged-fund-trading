@@ -72,6 +72,11 @@ jobs:
             --function-name $FUNCTION_NAME \
             --zip-file fileb://function.zip
 
+      - name: Wait for code update to finish
+        run: |
+          aws lambda wait function-active \
+            --function-name $FUNCTION_NAME
+            
       - name: Attach new layer to Lambda function
         run: |
           aws lambda update-function-configuration \
