@@ -3,6 +3,23 @@ import boto3
 import json
 from botocore.exceptions import ClientError
 
+VALID_USERS = {
+    "david": "streamlitTest2025$",
+}
+
+st.title("🔒 Trading Bot Registration")
+
+username = st.text_input("Username")
+password = st.text_input("Password", type="password")
+
+if st.button("Log in"):
+    if VALID_USERS.get(username) == password:
+        st.success(f"Welcome, {username}!")
+        # … your registration form code goes here …
+    else:
+        st.error("❌ Invalid credentials")
+    st.stop()
+
 # ---------------------- Configuration ----------------------
 # Ensure the following environment variables are set, or configure AWS credentials
 # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
