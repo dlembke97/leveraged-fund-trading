@@ -1,40 +1,46 @@
 import streamlit as st
 import boto3
-import json
+import os
 from botocore.exceptions import ClientError
 
-VALID_USERS = {
-    "david": "streamlitTest2025$",
-}
-
-st.title("🔒 Trading Bot Registration")
-
-username = st.text_input("Username")
-password = st.text_input("Password", type="password")
-
-if st.button("Log in"):
-    if VALID_USERS.get(username) == password:
-        st.success(f"Welcome, {username}!")
-        # … your registration form code goes here …
-    else:
-        st.error("❌ Invalid credentials")
-    st.stop()
-
-# ---------------------- Configuration ----------------------
-# Ensure the following environment variables are set, or configure AWS credentials
-# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
-
-# DynamoDB table name
-TABLE_NAME = "Users"
+# ---------- Configuration ----------
+# DynamoDB table name and AWS region via environment vars
+TABLE_NAME = os.getenv('TABLE_NAME', 'Users')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')
 
 # Initialize DynamoDB resource
-dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table(TABLE_NAME)
+try:
+    dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+    table = dynamodb.Table(TABLE_NAME)
+except Exception as e:
+    st.error(f"Error initializing DynamoDB: {e}")
+    st.stop()
 
-# ---------------------- Helpers ----------------------
+# ---------- Authentication ----------
+# Simple in-app authentication; replace or integrate with a secrets store for production
+VALID_USERS = {
+    "david": "Testing2020$!@#",
+}
+
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+# Login form
+if not st.session_state.logged_in:
+    st.title("🔒 Trading Bot Registration — Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Log in"):
+        if VALID_USERS.get(username) == password:
+            st.session_state.logged_in = True
+            st.success(f"Welcome, {username}!")
+        else:
+            st.error("Invalid credentials")
+    st.stop()
+
+# ---------- Helper Functions ----------
 
 def create_trading_config():
-    # Default initial trading_config structure
     return {
         "FNGA": {
             "buy_triggers": [300, 250, 200],
@@ -54,14 +60,12 @@ def create_trading_config():
         }
     }
 
-# ---------------------- Streamlit App ----------------------
-
+# ---------- Registration Form ----------
 st.title("Trading Bot User Registration")
-st.markdown("Register to use the trading bot by providing your credentials below.")
+st.markdown("Complete the form below to register your account for the trading bot.")
 
-# Input form
 with st.form(key="registration_form"):
-    user_id = st.text_input("User ID", help="Unique identifier for your account")
+    user_id = st.text_input("User ID", help="A unique identifier for your account")
     alpaca_api_key = st.text_input("Alpaca API Key")
     alpaca_api_secret = st.text_input("Alpaca API Secret", type="password")
     sender_email = st.text_input("Sender Email")
@@ -70,10 +74,10 @@ with st.form(key="registration_form"):
     submit = st.form_submit_button("Register")
 
 if submit:
+    # Validate inputs
     if not all([user_id, alpaca_api_key, alpaca_api_secret, sender_email, receiver_email, sender_email_password]):
         st.error("All fields are required. Please fill in every field.")
     else:
-        # Prepare item
         item = {
             'user_id': user_id,
             'alpaca_api_key': alpaca_api_key,
