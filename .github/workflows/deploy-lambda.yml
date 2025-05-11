@@ -1,0 +1,95 @@
+# .github/workflows/deploy-lambda.yml
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Build & Deploy Trading Bot
+
+on:
+  push:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FUNCTION_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME }}    # set this secret to your Lambda function name
+      LAYER_BUCKET:  ${{ secrets.LAYER_S3_BUCKET }}         # the S3 bucket you created
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Set up Python 3.11.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11.9'
+
+      # ─── Layer build & publish ────────────────────────────────────────────────────
+
+      - name: Install layer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          mkdir -p layer/python
+          pip install --no-cache-dir alpaca-trade-api pandas_market_calendars -t layer/python
+          find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
+
+      - name: Package Lambda layer
+        run: |
+          cd layer
+          zip -r ../layer.zip python
+
+      - name: Upload layer.zip to S3
+        run: aws s3 cp layer.zip s3://$LAYER_BUCKET/layer.zip
+
+      - name: Publish new Lambda layer version from S3
+        id: publish_layer
+        run: |
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name trading-bot-deps \
+            --description "Dependencies for trading bot (alpaca + market cal)" \
+            --license-info "MIT" \
+            --content S3Bucket=$LAYER_BUCKET,S3Key=layer.zip \
+            --compatible-runtimes python3.11 \
+            --output text \
+            --query LayerVersionArn)
+          echo "layerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
+
+      - name: Show published Layer ARN
+        run: |
+          echo "→ ${{ steps.publish_layer.outputs.layerArn }}"
+
+      # ─── Function packaging & deploy ─────────────────────────────────────────────
+
+      - name: Package Lambda function code
+        run: |
+          zip -r function.zip lambda_bot
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --zip-file fileb://function.zip
+
+      - name: Wait for code to be Active
+        run: |
+          aws lambda wait function-active --function-name $FUNCTION_NAME
+
+      - name: Attach new layer to Lambda function (with retry)
+        run: |
+          LAYER_ARN=${{ steps.publish_layer.outputs.layerArn }}
+          for i in {1..6}; do
+            if aws lambda update-function-configuration \
+                 --function-name $FUNCTION_NAME \
+                 --handler lambda_bot.lambda_function.lambda_handler \
+                 --layers $LAYER_ARN; then
+              echo "✔ Layer attached."
+              break
+            else
+              echo "⚠️ Conflict, retrying…"
+              sleep 10
+            fi
+          done
+
