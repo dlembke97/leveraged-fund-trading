@@ -1,6 +1,7 @@
 .env
 .vscode/launch.json
 users.db
+item.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
