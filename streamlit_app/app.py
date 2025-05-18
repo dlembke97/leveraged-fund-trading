@@ -13,7 +13,7 @@ table = dynamodb.Table(TABLE_NAME)
 
 # ---------- Authentication ----------
 VALID_USERS = {
-    "david": "Testing",
+    "david": "Testing$!@#",
 }
 
 # Initialize login state
