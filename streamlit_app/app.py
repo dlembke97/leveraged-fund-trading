@@ -13,24 +13,28 @@ table = dynamodb.Table(TABLE_NAME)
 
 # ---------- Authentication ----------
 VALID_USERS = {
-    "david": "Testing2020$!@#",
+    "david": "Testing",
 }
 
+# Initialize login state
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
+# Show login form if not authenticated
 if not st.session_state.logged_in:
     st.title("🔒 Trading Bot Registration — Login")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-    if st.button("Log in"):
+    login_clicked = st.button("Log in")
+    if login_clicked:
         if VALID_USERS.get(username) == password:
             st.session_state.logged_in = True
             st.success(f"Welcome, {username}!")
-            st.experimental_rerun()
         else:
             st.error("Invalid credentials")
-    st.stop()
+    # If still not logged in, stop and do not show registration
+    if not st.session_state.logged_in:
+        st.stop()
 
 # ---------- Helpers ----------
 
@@ -55,7 +59,6 @@ with st.form(key="registration_form"):
     st.subheader("Trading Configuration")
     st.markdown("Enter your desired tickers and triggers.")
     tickers_str = st.text_input("Tickers (comma-separated)", value="FNGA,TQQQ")
-    # Parse tickers
     tickers = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
     trading_config = {}
     for ticker in tickers:
