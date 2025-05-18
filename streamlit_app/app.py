@@ -1,23 +1,17 @@
 import streamlit as st
 import boto3
 import os
+import json
 from botocore.exceptions import ClientError
 
 # ---------- Configuration ----------
-# DynamoDB table name and AWS region via environment vars
 TABLE_NAME = os.getenv('TABLE_NAME', 'Users')
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')
 
-# Initialize DynamoDB resource
-try:
-    dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
-    table = dynamodb.Table(TABLE_NAME)
-except Exception as e:
-    st.error(f"Error initializing DynamoDB: {e}")
-    st.stop()
+dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+table = dynamodb.Table(TABLE_NAME)
 
 # ---------- Authentication ----------
-# Simple in-app authentication; replace or integrate with a secrets store for production
 VALID_USERS = {
     "david": "Testing2020$!@#",
 }
@@ -25,7 +19,6 @@ VALID_USERS = {
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# Login form
 if not st.session_state.logged_in:
     st.title("🔒 Trading Bot Registration — Login")
     username = st.text_input("Username")
@@ -34,49 +27,54 @@ if not st.session_state.logged_in:
         if VALID_USERS.get(username) == password:
             st.session_state.logged_in = True
             st.success(f"Welcome, {username}!")
+            st.experimental_rerun()
         else:
             st.error("Invalid credentials")
     st.stop()
 
-# ---------- Helper Functions ----------
+# ---------- Helpers ----------
 
-def create_trading_config():
-    return {
-        "FNGA": {
-            "buy_triggers": [300, 250, 200],
-            "sell_triggers": [650, 700, 750],
-            "last_buy_price": None,
-            "last_sell_price": None,
-            "triggered_buy_levels": [],
-            "triggered_sell_levels": []
-        },
-        "TQQQ": {
-            "buy_triggers": [45, 40, 35],
-            "sell_triggers": [85, 90, 95],
-            "last_buy_price": None,
-            "last_sell_price": None,
-            "triggered_buy_levels": [],
-            "triggered_sell_levels": []
-        }
-    }
+def parse_trigger_list(text):
+    try:
+        return [int(x.strip()) for x in text.split(',') if x.strip()]
+    except ValueError:
+        return []
 
 # ---------- Registration Form ----------
 st.title("Trading Bot User Registration")
-st.markdown("Complete the form below to register your account for the trading bot.")
+st.markdown("Complete the form below to register your account and custom trading configuration.")
 
 with st.form(key="registration_form"):
-    user_id = st.text_input("User ID", help="A unique identifier for your account")
+    user_id = st.text_input("User ID", help="Unique identifier for your account")
     alpaca_api_key = st.text_input("Alpaca API Key")
     alpaca_api_secret = st.text_input("Alpaca API Secret", type="password")
     sender_email = st.text_input("Sender Email")
     receiver_email = st.text_input("Receiver Email")
     sender_email_password = st.text_input("Sender Email Password", type="password")
+    st.markdown("---")
+    st.subheader("Trading Configuration")
+    st.markdown("Enter your desired tickers and triggers.")
+    tickers_str = st.text_input("Tickers (comma-separated)", value="FNGA,TQQQ")
+    # Parse tickers
+    tickers = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
+    trading_config = {}
+    for ticker in tickers:
+        st.markdown(f"**{ticker}** configuration")
+        buy_str = st.text_input(f"{ticker} Buy Triggers (comma-separated)", key=f"buy_{ticker}")
+        sell_str = st.text_input(f"{ticker} Sell Triggers (comma-separated)", key=f"sell_{ticker}")
+        trading_config[ticker] = {
+            "buy_triggers": parse_trigger_list(buy_str),
+            "sell_triggers": parse_trigger_list(sell_str),
+            "last_buy_price": None,
+            "last_sell_price": None,
+            "triggered_buy_levels": [],
+            "triggered_sell_levels": []
+        }
     submit = st.form_submit_button("Register")
 
 if submit:
-    # Validate inputs
     if not all([user_id, alpaca_api_key, alpaca_api_secret, sender_email, receiver_email, sender_email_password]):
-        st.error("All fields are required. Please fill in every field.")
+        st.error("All primary fields are required. Please fill in every field.")
     else:
         item = {
             'user_id': user_id,
@@ -85,10 +83,11 @@ if submit:
             'sender_email': sender_email,
             'receiver_email': receiver_email,
             'sender_email_password': sender_email_password,
-            'trading_config': create_trading_config()
+            'trading_config': trading_config
         }
         try:
             table.put_item(Item=item)
             st.success(f"User '{user_id}' registered successfully!")
+            st.balloons()
         except ClientError as e:
             st.error(f"Registration failed: {e.response['Error']['Message']}")
