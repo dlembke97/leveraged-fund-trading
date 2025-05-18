@@ -4,7 +4,6 @@ import time
 import datetime
 from zoneinfo import ZoneInfo
 
-
 import boto3
 from alpaca_trade_api.rest import REST, TimeFrame, APIError
 import pandas_market_calendars as mcal
@@ -24,8 +23,11 @@ def is_market_open():
     schedule = NYSE.schedule(start_date=now.date(), end_date=now.date())
     if schedule.empty:
         return False
-    open_dt = schedule.at[now.date(), "market_open"].to_pydatetime()
-    close_dt = schedule.at[now.date(), "market_close"].to_pydatetime()
+
+    # Use iloc[0] to grab the only row in today's schedule
+    row = schedule.iloc[0]
+    open_dt  = row["market_open"].to_pydatetime()
+    close_dt = row["market_close"].to_pydatetime()
     return open_dt <= now <= close_dt
 
 def wait_for_fill(api, order_id, interval=0.5):
@@ -53,20 +55,59 @@ def one_cycle(api, config, email_mgr):
         price = get_current_price(api, symbol)
         if price is None:
             continue
-        # SELL logic for example
+
+        # SELL logic
         for trigger in sorted(cfg["sell_triggers"]):
             if price >= trigger and trigger not in cfg["triggered_sell_levels"]:
                 try:
-                    order = api.submit_order(symbol=symbol, notional="200", side="sell", type="market", time_in_force="day")
+                    order = api.submit_order(
+                        symbol=symbol,
+                        notional="200",
+                        side="sell",
+                        type="market",
+                        time_in_force="day"
+                    )
                 except APIError:
                     logger.warning(f"Wash trade block on sell {symbol}; retrying in 1s")
                     time.sleep(1)
-                    order = api.submit_order(symbol=symbol, notional="200", side="sell", type="market", time_in_force="day")
+                    order = api.submit_order(
+                        symbol=symbol,
+                        notional="200",
+                        side="sell",
+                        type="market",
+                        time_in_force="day"
+                    )
                 wait_for_fill(api, order.id)
                 cfg["triggered_sell_levels"].add(trigger)
                 email_mgr.send_trigger_alert(f"{symbol} sold at {trigger}")
                 break
-        # BUY logic would go here...
+
+        # BUY logic
+        for trigger in sorted(cfg["buy_triggers"]):
+            if price <= trigger and trigger not in cfg["triggered_buy_levels"]:
+                try:
+                    order = api.submit_order(
+                        symbol=symbol,
+                        notional="200",
+                        side="buy",
+                        type="market",
+                        time_in_force="day"
+                    )
+                except APIError:
+                    logger.warning(f"Wash trade block on buy {symbol}; retrying in 1s")
+                    time.sleep(1)
+                    order = api.submit_order(
+                        symbol=symbol,
+                        notional="200",
+                        side="buy",
+                        type="market",
+                        time_in_force="day"
+                    )
+                wait_for_fill(api, order.id)
+                cfg["triggered_buy_levels"].add(trigger)
+                email_mgr.send_trigger_alert(f"{symbol} bought at {trigger}")
+                break
+
     return config
 
 def lambda_handler(event, context):
@@ -77,15 +118,25 @@ def lambda_handler(event, context):
     resp = table.scan()
     users = resp.get("Items", [])
     for u in users:
-        user_id = u["user_id"]
+        user_id = u.get("user_id")
         logger.info(f"Processing user {user_id}")
-        api = REST(u["alpaca_api_key"], u["alpaca_api_secret"], base_url="https://paper-api.alpaca.markets")
-        email_mgr = EmailManager(sender_email=u["sender_email"], receiver_email=u["receiver_email"], sender_password=u["sender_email_password"])
+        api = REST(
+            u.get("alpaca_api_key"),
+            u.get("alpaca_api_secret"),
+            base_url="https://paper-api.alpaca.markets"
+        )
+        email_mgr = EmailManager(
+            sender_email=u.get("sender_email"),
+            receiver_email=u.get("receiver_email"),
+            sender_password=u.get("sender_email_password")
+        )
         try:
             updated = one_cycle(api, u.get("trading_config", {}), email_mgr)
-            table.update_item(Key={"user_id": user_id},
-                              UpdateExpression="SET trading_config = :cfg",
-                              ExpressionAttributeValues={":cfg": updated})
+            table.update_item(
+                Key={"user_id": user_id},
+                UpdateExpression="SET trading_config = :cfg",
+                ExpressionAttributeValues={":cfg": updated}
+            )
         except Exception as e:
             logger.error(f"Error for user {user_id}: {e}", exc_info=True)
 
