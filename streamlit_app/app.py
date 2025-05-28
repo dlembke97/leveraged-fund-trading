@@ -24,16 +24,11 @@ FIREBASE_APP_ID     = st.secrets["appId"]
 # ---------- Authentication ----------
 VALID_USERS = {"david": "Testing"}
 
+# Initialize login state
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# ---------- Authentication ----------
-VALID_USERS = {"david": "Testing"}
-
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-
-# Login form using st.form
+# Login form
 if not st.session_state.logged_in:
     st.title("🔒 Trading Bot Registration — Login")
     with st.form("login_form"):
@@ -46,8 +41,9 @@ if not st.session_state.logged_in:
             st.success(f"Welcome, {username}!")
         else:
             st.error("Invalid credentials")
-    # Stop further rendering until successful login
-    st.stop()
+    # Only stop if still not logged in after attempt
+    if not st.session_state.logged_in:
+        st.stop()
 
 # ---------- Helpers ---------- ---------- ----------
 def parse_trigger_list(text):
