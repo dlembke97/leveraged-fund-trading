@@ -13,22 +13,18 @@ dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 table = dynamodb.Table(TABLE_NAME)
 
 # ---------- Push Notification Secrets ----------
-REGISTER_ENDPOINT       = st.secrets["REGISTER_ENDPOINT"]
-PUBLIC_VAPID_KEY        = st.secrets["PUBLIC_VAPID_KEY"]
-FIREBASE_API_KEY        = st.secrets["FIREBASE_API_KEY"]
-FIREBASE_AUTH_DOMAIN    = st.secrets["FIREBASE_AUTH_DOMAIN"]
-FIREBASE_PROJECT_ID     = st.secrets["FIREBASE_PROJECT_ID"]
-FIREBASE_SENDER_ID      = st.secrets["FIREBASE_SENDER_ID"]
-FIREBASE_APP_ID         = st.secrets["FIREBASE_APP_ID"]
+REGISTER_ENDPOINT   = st.secrets["REGISTER_ENDPOINT"]
+PUBLIC_VAPID_KEY    = st.secrets["PUBLIC_VAPID_KEY"]
+FIREBASE_API_KEY    = st.secrets["apiKey"]
+FIREBASE_AUTH_DOMAIN= st.secrets["authDomain"]
+FIREBASE_PROJECT_ID = st.secrets["projectId"]
+FIREBASE_SENDER_ID  = st.secrets["messagingSenderId"]
+FIREBASE_APP_ID     = st.secrets["appId"]
 
 # ---------- Authentication ----------
-VALID_USERS = {
-    "david": "Testing",
-}
-
+VALID_USERS = {"david": "Testing"}
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
-
 if not st.session_state.logged_in:
     st.title("🔒 Trading Bot Registration — Login")
     username = st.text_input("Username")
@@ -101,7 +97,7 @@ if submitted:
             st.stop()
 
         if enable_notifs:
-            # Build the Firebase config object for JS init
+            # Build Firebase config from individual secrets
             firebase_config = json.dumps({
                 "apiKey": FIREBASE_API_KEY,
                 "authDomain": FIREBASE_AUTH_DOMAIN,
