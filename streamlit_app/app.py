@@ -12,10 +12,14 @@ AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')
 dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 table = dynamodb.Table(TABLE_NAME)
 
-# Load push-related secrets
-REGISTER_ENDPOINT = st.secrets["REGISTER_ENDPOINT"]
-PUBLIC_VAPID_KEY   = st.secrets["PUBLIC_VAPID_KEY"]
-FIREBASE_CONFIG    = st.secrets["FIREBASE_CONFIG"]
+# ---------- Push Notification Secrets ----------
+REGISTER_ENDPOINT       = st.secrets["REGISTER_ENDPOINT"]
+PUBLIC_VAPID_KEY        = st.secrets["PUBLIC_VAPID_KEY"]
+FIREBASE_API_KEY        = st.secrets["FIREBASE_API_KEY"]
+FIREBASE_AUTH_DOMAIN    = st.secrets["FIREBASE_AUTH_DOMAIN"]
+FIREBASE_PROJECT_ID     = st.secrets["FIREBASE_PROJECT_ID"]
+FIREBASE_SENDER_ID      = st.secrets["FIREBASE_SENDER_ID"]
+FIREBASE_APP_ID         = st.secrets["FIREBASE_APP_ID"]
 
 # ---------- Authentication ----------
 VALID_USERS = {
@@ -49,13 +53,13 @@ st.title("Trading Bot User Registration")
 st.markdown("Complete the form below to register your account and custom trading configuration.")
 
 with st.form("registration_form"):
-    user_id                  = st.text_input("User ID", help="Unique identifier for your account")
-    alpaca_api_key           = st.text_input("Alpaca API Key")
-    alpaca_api_secret        = st.text_input("Alpaca API Secret", type="password")
-    enable_notifs            = st.checkbox("Enable push notifications")
-    sender_email             = st.text_input("Sender Email")
-    receiver_email           = st.text_input("Receiver Email")
-    sender_email_password    = st.text_input("Sender Email Password", type="password")
+    user_id               = st.text_input("User ID", help="Unique identifier for your account")
+    alpaca_api_key        = st.text_input("Alpaca API Key")
+    alpaca_api_secret     = st.text_input("Alpaca API Secret", type="password")
+    enable_notifs         = st.checkbox("Enable push notifications")
+    sender_email          = st.text_input("Sender Email")
+    receiver_email        = st.text_input("Receiver Email")
+    sender_email_password = st.text_input("Sender Email Password", type="password")
     st.markdown("---")
     st.subheader("Trading Configuration")
     tickers_str = st.text_input("Tickers (comma-separated)", value="FNGA,TQQQ")
@@ -66,22 +70,19 @@ with st.form("registration_form"):
         buy_str  = st.text_input(f"{ticker} Buy Triggers (comma-separated)", key=f"buy_{ticker}")
         sell_str = st.text_input(f"{ticker} Sell Triggers (comma-separated)", key=f"sell_{ticker}")
         trading_config[ticker] = {
-            "buy_triggers":         parse_trigger_list(buy_str),
-            "sell_triggers":        parse_trigger_list(sell_str),
-            "last_buy_price":       None,
-            "last_sell_price":      None,
+            "buy_triggers": parse_trigger_list(buy_str),
+            "sell_triggers": parse_trigger_list(sell_str),
+            "last_buy_price": None,
+            "last_sell_price": None,
             "triggered_buy_levels": [],
-            "triggered_sell_levels":[]
+            "triggered_sell_levels": []
         }
-
     submitted = st.form_submit_button("Register")
 
 if submitted:
-    # Validate
     if not all([user_id, alpaca_api_key, alpaca_api_secret, sender_email, receiver_email, sender_email_password]):
         st.error("All primary fields are required. Please fill in every field.")
     else:
-        # Persist to DynamoDB
         item = {
             'user_id':               user_id,
             'alpaca_api_key':        alpaca_api_key,
@@ -99,25 +100,28 @@ if submitted:
             st.error(f"Registration failed: {e.response['Error']['Message']}")
             st.stop()
 
-        # If they opted in, inject JS to register push token
         if enable_notifs:
-            # JSON-stringify the Firebase config for injection
-            firebase_json = json.dumps(FIREBASE_CONFIG)
+            # Build the Firebase config object for JS init
+            firebase_config = json.dumps({
+                "apiKey": FIREBASE_API_KEY,
+                "authDomain": FIREBASE_AUTH_DOMAIN,
+                "projectId": FIREBASE_PROJECT_ID,
+                "messagingSenderId": FIREBASE_SENDER_ID,
+                "appId": FIREBASE_APP_ID
+            })
             js = f"""
             (async () => {{
-              // Load Firebase app & messaging
-              firebase.initializeApp({firebase_json});
+              // Initialize Firebase
+              firebase.initializeApp({firebase_config});
               const messaging = firebase.messaging();
 
               // Register service worker
               await navigator.serviceWorker.register('/firebase-messaging-sw.js');
 
-              // Ask permission
+              // Request permission
               const perm = await Notification.requestPermission();
               if (perm === 'granted') {{
-                // Get FCM token
                 const token = await messaging.getToken({{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
-                // Send to your registration endpoint
                 await fetch('{REGISTER_ENDPOINT}', {{
                   method: 'POST',
                   headers: {{ 'Content-Type': 'application/json' }},
