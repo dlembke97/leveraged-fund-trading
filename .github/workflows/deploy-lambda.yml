@@ -1,6 +1,4 @@
-# .github/workflows/deploy-lambda.yml
-# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: Build & Deploy Trading Bot
+name: Build & Deploy Trading & Registration Lambdas
 
 on:
   push:
@@ -9,8 +7,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      FUNCTION_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME }}    # set this secret to your Lambda function name
-      LAYER_BUCKET:  ${{ secrets.LAYER_S3_BUCKET }}         # the S3 bucket you created
+      FUNCTION_NAME:           ${{ secrets.LAMBDA_FUNCTION_NAME }}
+      REGISTER_FUNCTION_NAME:  ${{ secrets.REGISTER_FUNCTION_NAME }}
+      LAYER_BUCKET:            ${{ secrets.LAYER_S3_BUCKET }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -58,38 +58,66 @@ jobs:
           echo "layerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
 
       - name: Show published Layer ARN
-        run: |
-          echo "→ ${{ steps.publish_layer.outputs.layerArn }}"
+        run: echo "→ ${{ steps.publish_layer.outputs.layerArn }}"
 
-      # ─── Function packaging & deploy ─────────────────────────────────────────────
+      # ─── Trading Lambda packaging & deploy ────────────────────────────────────────
 
-      - name: Package Lambda function code
-        run: |
-          zip -r function.zip lambda_bot
+      - name: Package Trading Lambda function code
+        run: zip -r function.zip lambda_bot
 
-      - name: Update Lambda function code
+      - name: Update Trading Lambda function code
         run: |
           aws lambda update-function-code \
             --function-name $FUNCTION_NAME \
             --zip-file fileb://function.zip
 
-      - name: Wait for code to be Active
-        run: |
-          aws lambda wait function-active --function-name $FUNCTION_NAME
+      - name: Wait for Trading function to be Active
+        run: aws lambda wait function-active --function-name $FUNCTION_NAME
 
-      - name: Attach new layer to Lambda function (with retry)
+      - name: Attach layer & handler to Trading Lambda (with retry)
         run: |
           LAYER_ARN=${{ steps.publish_layer.outputs.layerArn }}
           for i in {1..6}; do
+            echo "Attempt $i to update Trading configuration..."
             if aws lambda update-function-configuration \
                  --function-name $FUNCTION_NAME \
                  --handler lambda_bot.lambda_function.lambda_handler \
-                 --layers $LAYER_ARN; then
-              echo "✔ Layer attached."
+                 --layers "$LAYER_ARN"; then
+              echo "✔ Trading Lambda config updated."
               break
             else
-              echo "⚠️ Conflict, retrying…"
+              echo "⚠️ Conflict updating Trading—retrying in 10s..."
               sleep 10
             fi
           done
 
+      # ─── Registration Lambda packaging & deploy ──────────────────────────────────
+
+      - name: Package Registration Lambda function code
+        run: zip -r register_device.zip lambda_registration
+
+      - name: Update Registration Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name $REGISTER_FUNCTION_NAME \
+            --zip-file fileb://register_device.zip
+
+      - name: Wait for Registration function to be Active
+        run: aws lambda wait function-active --function-name $REGISTER_FUNCTION_NAME
+
+      - name: Attach layer & handler to Registration Lambda (with retry)
+        run: |
+          LAYER_ARN=${{ steps.publish_layer.outputs.layerArn }}
+          for i in {1..6}; do
+            echo "Attempt $i to update Registration configuration..."
+            if aws lambda update-function-configuration \
+                 --function-name $REGISTER_FUNCTION_NAME \
+                 --handler lambda_registration.register_device.lambda_handler \
+                 --layers "$LAYER_ARN"; then
+              echo "✔ Registration Lambda config updated."
+              break
+            else
+              echo "⚠️ Conflict updating Registration—retrying in 10s..."
+              sleep 10
+            fi
+          done

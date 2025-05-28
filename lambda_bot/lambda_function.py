@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import boto3
 from alpaca_trade_api.rest import REST, TimeFrame, APIError
 import pandas_market_calendars as mcal
-from lambda_bot.common_scripts import EmailManager, setup_logger
+from lambda_bot.common_scripts import EmailManager, setup_logger, send_push
 
 #─── Setup ───────────────────────────────────────────────
 logger = setup_logger("lambda_bot")
@@ -79,7 +79,13 @@ def one_cycle(api, config, email_mgr):
                     )
                 wait_for_fill(api, order.id)
                 cfg["triggered_sell_levels"].add(trigger)
-                email_mgr.send_trigger_alert(f"{symbol} sold at {trigger}")
+                endpoint = cfg.get('push_endpoint')
+                if endpoint:
+                    send_push(
+                        endpoint,
+                        f"Trade Alert: {symbol}",
+                        f"{symbol} sold at ${price:.2f}"
+                    )
                 break
 
         # BUY logic
@@ -105,7 +111,12 @@ def one_cycle(api, config, email_mgr):
                     )
                 wait_for_fill(api, order.id)
                 cfg["triggered_buy_levels"].add(trigger)
-                email_mgr.send_trigger_alert(f"{symbol} bought at {trigger}")
+                if endpoint:
+                    send_push(
+                        endpoint,
+                        f"Trade Alert: {symbol}",
+                        f"{symbol} bought at ${price:.2f}"
+                    )
                 break
 
     return config

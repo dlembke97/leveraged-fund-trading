@@ -2,6 +2,8 @@ import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import json
+import boto3
 
 def setup_logger(name: str, level=logging.INFO):
     logger = logging.getLogger(name)
@@ -12,6 +14,18 @@ def setup_logger(name: str, level=logging.INFO):
         handler.setFormatter(logging.Formatter(fmt))
         logger.addHandler(handler)
     return logger
+
+def send_push(endpoint_arn, title, body):
+    sns = boto3.client('sns')
+    payload = {
+        'default': body,
+        'GCM': json.dumps({'notification': {'title': title, 'body': body}})
+    }
+    sns.publish(
+        TargetArn=endpoint_arn,
+        MessageStructure='json',
+        Message=json.dumps(payload)
+    )
 
 class EmailManager:
     def __init__(self, sender_email, receiver_email, sender_password):
