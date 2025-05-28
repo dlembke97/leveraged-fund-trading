@@ -58,7 +58,7 @@ with st.form("registration_form"):
     sender_email_password = st.text_input("Sender Email Password", type="password")
     st.markdown("---")
     st.subheader("Trading Configuration")
-    tickers_str = st.text_input("Tickers (comma-separated)", value="FNGA,TQQQ")
+    tickers_str = st.text_input("Tickers (comma-separated)", value="TQQQ")
     tickers     = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
     trading_config = {}
     for ticker in tickers:
