@@ -22,7 +22,7 @@ FIREBASE_SENDER_ID  = st.secrets["messagingSenderId"]
 FIREBASE_APP_ID     = st.secrets["appId"]
 
 # ---------- Authentication ----------
-VALID_USERS = {"david": "Testing"}
+VALID_USERS = {"david": "Testing2020"}
 # Initialize login state
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -65,6 +65,7 @@ with st.form("registration_form"):
     st.markdown("---")
     st.subheader("Trading Configuration")
     tickers_str = st.text_input("Tickers (comma-separated)", value="TQQQ")
+    st.write(tickers_str)
     tickers     = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
     trading_config = {}
     for ticker in tickers:
