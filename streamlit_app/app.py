@@ -37,7 +37,6 @@ if not st.session_state.logged_in:
         if VALID_USERS.get(username) == password:
             st.session_state.logged_in = True
             st.success(f"Welcome, {username}!")
-            st.rerun()
         else:
             st.error("Invalid credentials")
     # If still not logged in, stop and do not show registration
@@ -112,6 +111,7 @@ if submitted:
                 "messagingSenderId": FIREBASE_SENDER_ID,
                 "appId": FIREBASE_APP_ID
             })
+            st.write(firebase_config)
             js = f"""
             (async () => {{
               // Initialize Firebase
