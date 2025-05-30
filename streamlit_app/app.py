@@ -104,7 +104,7 @@ if submitted:
             st.error(f"Registration failed: {e.response['Error']['Message']}")
             st.stop()
 
-                        if enable_notifs:
+        if enable_notifs:
             # Build Firebase config from individual secrets
             firebase_config = json.dumps({
                 "apiKey": FIREBASE_API_KEY,
