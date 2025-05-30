@@ -133,7 +133,7 @@ if submitted:
                 console.log('✅ Firebase Messaging loaded');
 
                 // Register Service Worker
-                const sw = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                const sw = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
                 console.log('✅ Service worker registered:', sw);
 
                 // Request permission
