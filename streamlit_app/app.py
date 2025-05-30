@@ -106,13 +106,13 @@ if submitted:
 
         if enable_notifs:
             # Build Firebase config from individual secrets
-            firebase_config = json.dumps({
+            firebase_config = {
                 "apiKey": FIREBASE_API_KEY,
                 "authDomain": FIREBASE_AUTH_DOMAIN,
                 "projectId": FIREBASE_PROJECT_ID,
                 "messagingSenderId": FIREBASE_SENDER_ID,
                 "appId": FIREBASE_APP_ID
-            })
+            }
 
             # Debugging-enhanced JS for push registration
             js = f"""
@@ -122,12 +122,12 @@ if submitted:
                 // Load Firebase modules dynamically
                 const fbAppModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
                 const fbMsgModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
-                const appInit = fbAppModule.initializeApp;
+                const initializeApp = fbAppModule.initializeApp;
                 const getMessaging = fbMsgModule.getMessaging;
                 const getToken = fbMsgModule.getToken;
 
                 // Initialize Firebase
-                const app = appInit({{firebase_config}});
+                const app = initializeApp({json.dumps(firebase_config)});
                 console.log('✅ Firebase initialized');
                 const messaging = getMessaging(app);
                 console.log('✅ Firebase Messaging loaded');
