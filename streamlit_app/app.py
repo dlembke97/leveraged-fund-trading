@@ -22,28 +22,30 @@ FIREBASE_SENDER_ID  = st.secrets["messagingSenderId"]
 FIREBASE_APP_ID     = st.secrets["appId"]
 
 # ---------- Authentication ----------
-VALID_USERS = {"david": "Testing2020"}
+VALID_USERS = {"david": "Testing"}
+
 # Initialize login state
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# Show login form if not authenticated
+# Login form
 if not st.session_state.logged_in:
     st.title("🔒 Trading Bot Registration — Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    login_clicked = st.button("Log in")
-    if login_clicked:
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted_login = st.form_submit_button("Log in")
+    if submitted_login:
         if VALID_USERS.get(username) == password:
             st.session_state.logged_in = True
             st.success(f"Welcome, {username}!")
         else:
             st.error("Invalid credentials")
-    # If still not logged in, stop and do not show registration
+    # Only stop if still not logged in after attempt
     if not st.session_state.logged_in:
         st.stop()
 
-# ---------- Helpers ----------
+# ---------- Helpers ---------- ---------- ----------
 def parse_trigger_list(text):
     try:
         return [int(x.strip()) for x in text.split(',') if x.strip()]
@@ -64,8 +66,7 @@ with st.form("registration_form"):
     sender_email_password = st.text_input("Sender Email Password", type="password")
     st.markdown("---")
     st.subheader("Trading Configuration")
-    tickers_str = st.text_input("Tickers (comma-separated)", value="TQQQ")
-    st.write(tickers_str)
+    tickers_str = st.text_input("Tickers (comma-separated)", value="FNGA,TQQQ")
     tickers     = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
     trading_config = {}
     for ticker in tickers:
@@ -112,25 +113,48 @@ if submitted:
                 "messagingSenderId": FIREBASE_SENDER_ID,
                 "appId": FIREBASE_APP_ID
             })
-            st.write(firebase_config)
+
+            # Debugging-enhanced JS for push registration
             js = f"""
             (async () => {{
-              // Initialize Firebase
-              firebase.initializeApp({firebase_config});
-              const messaging = firebase.messaging();
+              console.log('🔔 Starting push registration flow');
+              try {{
+                // Dynamically import Firebase modules
+                const fbApp   = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
+                const fbMsg   = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
+                const { initializeApp } = fbApp;
+                const { getMessaging, getToken } = fbMsg;
 
-              // Register service worker
-              await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                // Initialize
+                const app = initializeApp({firebase_config});
+                console.log('✅ Firebase initialized');
 
-              // Request permission
-              const perm = await Notification.requestPermission();
-              if (perm === 'granted') {{
-                const token = await messaging.getToken({{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
-                await fetch('{REGISTER_ENDPOINT}', {{
-                  method: 'POST',
-                  headers: {{ 'Content-Type': 'application/json' }},
-                  body: JSON.stringify({{ user_id: '{user_id}', device_token: token }})
-                }});
+                const messaging = getMessaging(app);
+                console.log('✅ Firebase Messaging loaded');
+
+                // Register Service Worker
+                const sw = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+                console.log('✅ Service worker registered:', sw);
+
+                // Request permission
+                const permission = await Notification.requestPermission();
+                console.log('🔔 Notification permission:', permission);
+                if (permission === 'granted') {{
+                  // Get token
+                  const token = await getToken(messaging, {{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
+                  console.log('🔑 FCM token:', token);
+
+                  // POST to registration endpoint
+                  const response = await fetch('{REGISTER_ENDPOINT}', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ user_id: '{user_id}', device_token: token }})
+                  }});
+                  const text = await response.text();
+                  console.log('📨 Registration response:', response.status, text);
+                }}
+              }} catch (err) {{
+                console.error('❌ Push registration error:', err);
               }}
             }})();
             """
