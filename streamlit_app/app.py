@@ -104,7 +104,7 @@ if submitted:
             st.error(f"Registration failed: {e.response['Error']['Message']}")
             st.stop()
 
-        if enable_notifs:
+                        if enable_notifs:
             # Build Firebase config from individual secrets
             firebase_config = json.dumps({
                 "apiKey": FIREBASE_API_KEY,
@@ -119,16 +119,16 @@ if submitted:
             (async () => {{
               console.log('🔔 Starting push registration flow');
               try {{
-                // Dynamically import Firebase modules
-                const fbApp   = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
-                const fbMsg   = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
-                const { initializeApp } = fbApp;
-                const { getMessaging, getToken } = fbMsg;
+                // Load Firebase modules dynamically
+                const fbAppModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
+                const fbMsgModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
+                const appInit = fbAppModule.initializeApp;
+                const getMessaging = fbMsgModule.getMessaging;
+                const getToken = fbMsgModule.getToken;
 
-                // Initialize
-                const app = initializeApp({firebase_config});
+                // Initialize Firebase
+                const app = appInit({{firebase_config}});
                 console.log('✅ Firebase initialized');
-
                 const messaging = getMessaging(app);
                 console.log('✅ Firebase Messaging loaded');
 
