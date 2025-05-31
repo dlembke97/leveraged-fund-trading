@@ -32,7 +32,7 @@ NYSE = mcal.get_calendar("NYSE")
 def get_decrypted_alpaca_creds(user_id: str):
     """
     Given a user_id, fetch that item from DynamoDB, then decrypt
-    the stored 'encrypted_alpaca_key' and 'encrypted_alpaca_secret' via Fernet.
+    'encrypted_alpaca_key' and 'encrypted_alpaca_secret' via Fernet.
     Returns (alpaca_api_key, alpaca_api_secret) as plain strings.
     """
     try:
@@ -94,8 +94,11 @@ def get_current_price(api, symbol):
 
 def one_cycle(api, config: dict, email_mgr: EmailManager):
     """
-    Executes one round of buy/sell logic for every symbol in `config`.
-    Now treats each quantity as a dollar‐amount (notional) rather than share count.
+    Executes one iteration of buy/sell logic for every symbol in `config`.
+    Now integrates two new blocks per‐ticker:
+      - cfg["sell_reallocate"]: if enabled, reinvest sale proceeds
+      - cfg["buy_funding"]: if type="sell", first sell other tickers to fund the buy
+    Quantities are all dollar‐notional (Decimal).
     """
     for symbol, cfg in config.items():
         price = get_current_price(api, symbol)
@@ -109,11 +112,11 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
         )
         for trigger, qty_decimal in sell_pairs:
             if price >= trigger and trigger not in cfg.get("triggered_sell_levels", set()):
+                # 1) Place the triggered sell for this ticker
                 try:
-                    # Use notional = str(qty_decimal)  (dollar amount)
                     order = api.submit_order(
                         symbol=symbol,
-                        notional=str(qty_decimal),
+                        notional=str(qty_decimal),  # dollar amount
                         side="sell",
                         type="market",
                         time_in_force="day"
@@ -130,9 +133,36 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
                     )
 
                 wait_for_fill(api, order.id)
+                # Mark this trigger as fired
                 cfg.setdefault("triggered_sell_levels", set()).add(trigger)
                 email_mgr.send_trigger_alert(f"{symbol} sold at {trigger} (notional=${qty_decimal})")
-                break
+
+                # 2) Re‐allocate proceeds if requested
+                sell_realloc = cfg.get("sell_reallocate", {"enabled": False})
+                if sell_realloc.get("enabled", False):
+                    total_sell_usd = qty_decimal  # entire proceed in USD
+
+                    for tgt in sell_realloc.get("targets", []):
+                        tgt_ticker = tgt["ticker"]
+                        proportion = tgt["proportion"]  # Decimal
+                        dollars_to_invest = (total_sell_usd * proportion).quantize(Decimal("0.01"))
+                        if dollars_to_invest > 0:
+                            try:
+                                buy_order = api.submit_order(
+                                    symbol=tgt_ticker,
+                                    notional=str(dollars_to_invest),
+                                    side="buy",
+                                    type="market",
+                                    time_in_force="day"
+                                )
+                                wait_for_fill(api, buy_order.id)
+                                email_mgr.send_trigger_alert(
+                                    f"{tgt_ticker} re‐invested ${dollars_to_invest} "
+                                    f"from sale of {symbol}@{trigger}"
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to re‐invest into {tgt_ticker}: {e}")
+                break  # only one triggered sell per cycle
 
         # ─── BUY logic ──────────────────────────────────────
         buy_pairs = sorted(
@@ -141,29 +171,82 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
         )
         for trigger, qty_decimal in buy_pairs:
             if price <= trigger and trigger not in cfg.get("triggered_buy_levels", set()):
-                try:
-                    order = api.submit_order(
-                        symbol=symbol,
-                        notional=str(qty_decimal),
-                        side="buy",
-                        type="market",
-                        time_in_force="day"
-                    )
-                except APIError:
-                    logger.warning(f"Wash trade block on buy {symbol}@{trigger}; retrying in 1s")
-                    time.sleep(1)
-                    order = api.submit_order(
-                        symbol=symbol,
-                        notional=str(qty_decimal),
-                        side="buy",
-                        type="market",
-                        time_in_force="day"
+                buy_fund = cfg.get("buy_funding", {"type": "cash"})
+
+                if buy_fund.get("type") == "cash":
+                    # 1A) Straight cash‐balance buy
+                    try:
+                        order = api.submit_order(
+                            symbol=symbol,
+                            notional=str(qty_decimal),
+                            side="buy",
+                            type="market",
+                            time_in_force="day"
+                        )
+                    except APIError:
+                        logger.warning(f"Wash trade block on buy {symbol}@{trigger}; retrying in 1s")
+                        time.sleep(1)
+                        order = api.submit_order(
+                            symbol=symbol,
+                            notional=str(qty_decimal),
+                            side="buy",
+                            type="market",
+                            time_in_force="day"
+                        )
+                    wait_for_fill(api, order.id)
+                    cfg.setdefault("triggered_buy_levels", set()).add(trigger)
+                    email_mgr.send_trigger_alert(f"{symbol} bought at {trigger} (notional=${qty_decimal})")
+
+                else:
+                    # 1B) Sell other ticker(s) first to raise funds
+                    total_needed = qty_decimal
+                    for source in buy_fund.get("sources", []):
+                        src_ticker = source["ticker"]
+                        proportion = source["proportion"]  # Decimal
+                        usd_from_src = (total_needed * proportion).quantize(Decimal("0.01"))
+                        if usd_from_src > 0:
+                            try:
+                                sell_order = api.submit_order(
+                                    symbol=src_ticker,
+                                    notional=str(usd_from_src),
+                                    side="sell",
+                                    type="market",
+                                    time_in_force="day"
+                                )
+                                wait_for_fill(api, sell_order.id)
+                                email_mgr.send_trigger_alert(
+                                    f"{src_ticker} sold for ${usd_from_src} "
+                                    f"to fund buy of {symbol}@{trigger}"
+                                )
+                            except Exception as e:
+                                logger.error(f"Failed to sell {src_ticker} for funding: {e}")
+
+                    # 2) Now place the intended buy
+                    try:
+                        order = api.submit_order(
+                            symbol=symbol,
+                            notional=str(qty_decimal),
+                            side="buy",
+                            type="market",
+                            time_in_force="day"
+                        )
+                    except APIError:
+                        logger.warning(f"Wash trade block on buy {symbol}@{trigger}; retrying in 1s")
+                        time.sleep(1)
+                        order = api.submit_order(
+                            symbol=symbol,
+                            notional=str(qty_decimal),
+                            side="buy",
+                            type="market",
+                            time_in_force="day"
+                        )
+                    wait_for_fill(api, order.id)
+                    cfg.setdefault("triggered_buy_levels", set()).add(trigger)
+                    email_mgr.send_trigger_alert(
+                        f"{symbol} bought at {trigger} (notional=${qty_decimal})"
                     )
 
-                wait_for_fill(api, order.id)
-                cfg.setdefault("triggered_buy_levels", set()).add(trigger)
-                email_mgr.send_trigger_alert(f"{symbol} bought at {trigger} (notional=${qty_decimal})")
-                break
+                break  # only one triggered buy per cycle
 
     return config
 
@@ -199,7 +282,7 @@ def lambda_handler(event, context):
             sender_password=SENDER_EMAIL_PASSWORD
         )
 
-        # Ensure that triggered levels are treated as sets
+        # Ensure "triggered_*_levels" are sets
         trading_cfg = u.get("trading_config", {})
         trading_cfg.setdefault("triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", [])))
         trading_cfg.setdefault("triggered_sell_levels", set(trading_cfg.get("triggered_sell_levels", [])))
@@ -207,7 +290,7 @@ def lambda_handler(event, context):
         try:
             updated_cfg = one_cycle(api, trading_cfg, email_mgr)
 
-            # Convert sets back to lists for DynamoDB
+            # Convert sets back to lists before saving to DynamoDB
             updated_cfg["triggered_buy_levels"] = list(updated_cfg.get("triggered_buy_levels", []))
             updated_cfg["triggered_sell_levels"] = list(updated_cfg.get("triggered_sell_levels", []))
 
