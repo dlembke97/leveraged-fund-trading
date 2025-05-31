@@ -3,7 +3,8 @@ import boto3
 import os
 import json
 from botocore.exceptions import ClientError
-from streamlit_javascript import st_javascript
+# from streamlit_javascript import st_javascript
+import streamlit.components.v1 as components  # <--- import this
 
 # ---------- Configuration ----------
 TABLE_NAME = os.getenv('TABLE_NAME', 'Users')
@@ -96,16 +97,23 @@ if submitted:
             'sender_email_password': sender_email_password,
             'trading_config':        trading_config
         }
-        try:
-            table.put_item(Item=item)
-            st.success(f"User '{user_id}' registered successfully!")
-            st.balloons()
-        except ClientError as e:
-            st.error(f"Registration failed: {e.response['Error']['Message']}")
-            st.stop()
-            
+        # try:
+        table.put_item(Item=item)
+        st.success(f"User '{user_id}' registered successfully!")
+        st.balloons()
+        # except ClientError as e:
+        #     st.error(f"Registration failed: {e.response['Error']['Message']}")
+        #     st.stop()
+
         if enable_notifs:
-            # Build Firebase config from individual secrets
+            # 1) Invisible iframe to load Firebase SDK into this origin
+            components.html(
+                '<iframe src="/static/inject-firebase.html" style="display:none;"></iframe>',
+                height=0,
+                width=0
+            )
+
+            # 2) Now immediately run your registration logic in a <script> tag
             firebase_config = {
                 "apiKey": FIREBASE_API_KEY,
                 "authDomain": FIREBASE_AUTH_DOMAIN,
@@ -114,100 +122,70 @@ if submitted:
                 "appId": FIREBASE_APP_ID
             }
 
-            # Updated JS snippet—loads scripts via <script> tags instead of dynamic import()
             js = f"""
+            <script>
             (async () => {{
               console.log('🔔 Starting push registration flow');
 
-              try {{
-                // 1) Load firebase-app.js
-                const script1 = document.createElement('script');
-                script1.src = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js';
-                document.head.appendChild(script1);
-                await new Promise(resolve => {{
-                  script1.onload = () => {{
-                    console.log('✅ Loaded firebase-app.js');
-                    resolve();
-                  }};
-                  script1.onerror = (e) => {{
-                    console.error('❌ Failed to load firebase-app.js', e);
-                    resolve(); // Resolve anyway so we can see the error
-                  }};
-                }});
-
-                // 2) Load firebase-messaging.js
-                const script2 = document.createElement('script');
-                script2.src = 'https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js';
-                document.head.appendChild(script2);
-                await new Promise(resolve => {{
-                  script2.onload = () => {{
-                    console.log('✅ Loaded firebase-messaging.js');
-                    resolve();
-                  }};
-                  script2.onerror = (e) => {{
-                    console.error('❌ Failed to load firebase-messaging.js', e);
-                    resolve();
-                  }};
-                }});
-
-                // 3) Initialize Firebase
-                if (typeof firebase === 'undefined' || !firebase.initializeApp) {{
-                  throw new Error('firebase SDK not available after loading scripts');
-                }}
-                firebase.initializeApp({json.dumps(firebase_config)});
-                console.log('✅ Firebase initialized');
-
-                // 4) Initialize Messaging
-                const messaging = firebase.messaging();
-                console.log('✅ Firebase Messaging loaded');
-
-                // 5) Register Service Worker
-                try {{
-                  const sw = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
-                  console.log('✅ Service worker registered:', sw);
-                }} catch (swErr) {{
-                  console.error('❌ Service worker failed to register:', swErr);
-                  throw swErr;
-                }}
-
-                // 6) Request Notification Permission
-                const permission = await Notification.requestPermission();
-                console.log('🔔 Notification permission:', permission);
-                if (permission !== 'granted') {{
-                  console.warn('⚠️ Notifications were not granted by the user');
-                  return;
-                }}
-
-                // 7) Get FCM Token
-                let token;
-                try {{
-                  token = await messaging.getToken({{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
-                  console.log('🔑 FCM token:', token);
-                }} catch (tokenErr) {{
-                  console.error('❌ Failed to get FCM token:', tokenErr);
-                  return;
-                }}
-
-                // 8) POST to your registration endpoint
-                console.log('📡 About to POST to:', '{REGISTER_ENDPOINT}');
-                try {{
-                  const response = await fetch('{REGISTER_ENDPOINT}', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ user_id: '{user_id}', device_token: token }})
-                  }});
-                  const text = await response.text();
-                  console.log('📨 Registration response:', response.status, text);
-                }} catch (postErr) {{
-                  console.error('❌ Fetch to register_device failed:', postErr);
-                }}
-
-              }} catch (err) {{
-                console.error('❌ Push registration error (outer):', err);
+              // 3) Initialize Firebase (SDK is already loaded by the hidden iframe)
+              if (typeof firebase === 'undefined' || !firebase.initializeApp) {{
+                console.error('❌ Firebase SDK not found on window');
+                return;
               }}
+              firebase.initializeApp({json.dumps(firebase_config)});
+              console.log('✅ Firebase initialized');
+
+              // 4) Initialize Messaging
+              const messaging = firebase.messaging();
+              console.log('✅ Firebase Messaging loaded');
+
+              // 5) Register the Service Worker
+              try {{
+                const sw = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
+                console.log('✅ Service worker registered:', sw);
+              }} catch (swErr) {{
+                console.error('❌ Service worker failed to register:', swErr);
+                return;
+              }}
+
+              // 6) Request Notification Permission
+              const permission = await Notification.requestPermission();
+              console.log('🔔 Notification permission:', permission);
+              if (permission !== 'granted') {{
+                console.warn('⚠️ Notifications not granted by the user');
+                return;
+              }}
+
+              // 7) Get FCM Token
+              let token;
+              try {{
+                token = await messaging.getToken({{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
+                console.log('🔑 FCM token:', token);
+              }} catch (tokenErr) {{
+                console.error('❌ Failed to get FCM token:', tokenErr);
+                return;
+              }}
+
+              // 8) POST to your registration endpoint
+              console.log('📡 About to POST to:', '{REGISTER_ENDPOINT}');
+              try {{
+                const response = await fetch('{REGISTER_ENDPOINT}', {{
+                  method: 'POST',
+                  headers: {{ 'Content-Type': 'application/json' }},
+                  body: JSON.stringify({{ user_id: '{user_id}', device_token: token }})
+                }});
+                const text = await response.text();
+                console.log('📨 Registration response:', response.status, text);
+              }} catch (postErr) {{
+                console.error('❌ Fetch to register_device failed:', postErr);
+              }}
+
             }})();
+            </script>
             """
-            st_javascript(js)
+
+    # 3) Inject that HTML+JS block into the page
+    components.html(js, height=0)
 
             # # Debugging-enhanced JS for push registration
             # js = f"""
