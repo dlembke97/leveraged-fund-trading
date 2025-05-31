@@ -31,23 +31,21 @@ jobs:
       - name: Install layer dependencies (build on Amazon Linux 2)
         run: |
           python -m pip install --upgrade pip
-
-          # Create a local folder for the layer
           mkdir -p layer/python
 
-          # Use the AWS SAM build image (Amazon Linux 2) to install our wheels
+          # Install & clean up ALL inside the container, so host never touches root-owned files
           docker run --rm \
             -v "${{ github.workspace }}/layer/python":/opt/python \
             public.ecr.aws/sam/build-python3.11:latest \
-            /bin/bash -c "pip install --no-cache-dir \
-              cryptography \
-              bcrypt \
-              alpaca-trade-api \
-              pandas_market_calendars \
-              -t /opt/python"
-
-          # Remove any leftover metadata to shrink the layer size
-          find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
+            /bin/bash -c "
+              pip install --no-cache-dir \
+                cryptography \
+                bcrypt \
+                alpaca-trade-api \
+                pandas_market_calendars \
+                -t /opt/python \
+              && find /opt/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
+            "
 
       - name: Package Lambda layer
         run: |
