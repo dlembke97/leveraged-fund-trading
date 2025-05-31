@@ -1,5 +1,6 @@
 import streamlit as st
 import boto3
+import bcrypt
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
 
