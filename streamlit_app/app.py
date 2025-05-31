@@ -1,6 +1,7 @@
 import streamlit as st
 import boto3
 import bcrypt
+import pandas as pd
 from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
@@ -270,13 +271,14 @@ with tabs[0]:
                 st.session_state["show_update_credentials"] = False
                 st.rerun()
 
-        # ─── Trading Configuration Section (with quantities) ────────────────────────
+        # ─── Trading Configuration Section (with editable tables) ───────────────────
         st.markdown("---")
         st.subheader("Trading Configuration")
 
         existing_config = item.get("trading_config", {})
 
         with st.form("trading_config_form"):
+            # Show existing tickers as comma-separated default
             existing_tickers = list(existing_config.keys())
             ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
             tickers_str = st.text_input(
@@ -290,55 +292,64 @@ with tabs[0]:
             new_trading_config = {}
             for ticker in tickers:
                 st.markdown(f"**{ticker}** configuration")
-                prev = existing_config.get(ticker, {})
 
-                # Previous triggers and quantities (Decimals in DynamoDB)
+                # Prefill previous values
+                prev = existing_config.get(ticker, {})
                 prev_buy = prev.get("buy_triggers", [])
                 prev_buy_qty = prev.get("buy_quantities", [])
                 prev_sell = prev.get("sell_triggers", [])
                 prev_sell_qty = prev.get("sell_quantities", [])
 
-                buy_str = st.text_input(
-                    f"{ticker} Buy Triggers (comma-separated)",
-                    value=", ".join(str(x) for x in prev_buy),
-                    key=f"tc_buy_{ticker}"
-                )
-                buy_qty_str = st.text_input(
-                    f"{ticker} Buy Quantities (comma-separated)",
-                    value=", ".join(str(x) for x in prev_buy_qty),
-                    key=f"tc_buy_qty_{ticker}"
-                )
-                sell_str = st.text_input(
-                    f"{ticker} Sell Triggers (comma-separated)",
-                    value=", ".join(str(x) for x in prev_sell),
-                    key=f"tc_sell_{ticker}"
-                )
-                sell_qty_str = st.text_input(
-                    f"{ticker} Sell Quantities (comma-separated)",
-                    value=", ".join(str(x) for x in prev_sell_qty),
-                    key=f"tc_sell_qty_{ticker}"
+                # Build DataFrame for buy side
+                buy_data = {
+                    "Trigger": prev_buy,
+                    "Quantity": [float(q) for q in prev_buy_qty]
+                }
+                buy_df = pd.DataFrame(buy_data)
+
+                st.write("Buy Levels and Quantities")
+                edited_buy = st.experimental_data_editor(
+                    buy_df,
+                    num_rows="dynamic",
+                    key=f"buy_table_{ticker}"
                 )
 
-                def parse_int_list(text):
-                    try:
-                        return [int(x.strip()) for x in text.split(",") if x.strip()]
-                    except ValueError:
-                        return []
+                # Build DataFrame for sell side
+                sell_data = {
+                    "Trigger": prev_sell,
+                    "Quantity": [float(q) for q in prev_sell_qty]
+                }
+                sell_df = pd.DataFrame(sell_data)
 
-                def parse_float_list(text):
-                    try:
-                        return [float(x.strip()) for x in text.split(",") if x.strip()]
-                    except ValueError:
-                        return []
+                st.write("Sell Levels and Quantities")
+                edited_sell = st.experimental_data_editor(
+                    sell_df,
+                    num_rows="dynamic",
+                    key=f"sell_table_{ticker}"
+                )
 
-                # Convert to native Python then to Decimal
-                buy_triggers = parse_int_list(buy_str)
-                raw_buy_qty = parse_float_list(buy_qty_str)
-                buy_quantities = [Decimal(str(x)) for x in raw_buy_qty]
+                # Parse back into lists (dropping NaNs)
+                buy_triggers = []
+                buy_quantities = []
+                if "Trigger" in edited_buy.columns and "Quantity" in edited_buy.columns:
+                    for _, row in edited_buy.iterrows():
+                        if pd.notna(row["Trigger"]) and pd.notna(row["Quantity"]):
+                            try:
+                                buy_triggers.append(int(row["Trigger"]))
+                                buy_quantities.append(Decimal(str(float(row["Quantity"]))))
+                            except Exception:
+                                pass
 
-                sell_triggers = parse_int_list(sell_str)
-                raw_sell_qty = parse_float_list(sell_qty_str)
-                sell_quantities = [Decimal(str(x)) for x in raw_sell_qty]
+                sell_triggers = []
+                sell_quantities = []
+                if "Trigger" in edited_sell.columns and "Quantity" in edited_sell.columns:
+                    for _, row in edited_sell.iterrows():
+                        if pd.notna(row["Trigger"]) and pd.notna(row["Quantity"]):
+                            try:
+                                sell_triggers.append(int(row["Trigger"]))
+                                sell_quantities.append(Decimal(str(float(row["Quantity"]))))
+                            except Exception:
+                                pass
 
                 new_trading_config[ticker] = {
                     "buy_triggers": buy_triggers,
@@ -360,6 +371,7 @@ with tabs[0]:
                 updated = update_trading_config(user_id, new_trading_config)
                 if updated:
                     st.success("Trading configuration updated!")
+                    st.rerun()
 
 
 # ─── Tab 2: Registration (Admin Only) ─────────────────────────────────────────
@@ -390,7 +402,6 @@ with tabs[1]:
     with st.form(key="registration_form"):
         new_user_id = st.text_input("Set Username", help="Unique identifier for this account")
         raw_trading_password = st.text_input("Set Your Password", type="password")
-
         submit = st.form_submit_button("Register")
 
     if submit:
