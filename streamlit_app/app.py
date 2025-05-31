@@ -138,9 +138,8 @@ with tabs[1]:
         st.info("Please log in as admin to register new users.")
 
         with st.form("admin_login_form"):
-            # Changed key from "admin_user_id" to "admin_user_input"
+            # Using distinct keys so we don’t collide with any other widget
             admin_user = st.text_input("Admin Username", key="admin_user_input")
-            # Changed key from "admin_password" to "admin_password_input"
             admin_pwd = st.text_input(
                 "Admin Password", type="password", key="admin_password_input"
             )
@@ -150,9 +149,7 @@ with tabs[1]:
             if VALID_USERS.get(admin_user) == admin_pwd:
                 st.session_state["admin_logged_in"] = True
                 st.success(f"Welcome, {admin_user}! You may now register new users.")
-                # Clear any previous form state using the same keys
-                st.session_state["admin_user_input"] = ""
-                st.session_state["admin_password_input"] = ""
+                # Removed the lines that tried to clear admin_user_input / admin_password_input
             else:
                 st.error("Invalid admin credentials.")
 
