@@ -13,6 +13,7 @@ psycopg2-binary = "*"
 fastapi = {extras = ["all"], version = "*"}
 pandas-market-calendars = "*"
 boto3 = "*"
+cryptography = "*"
 
 [dev-packages]
 
