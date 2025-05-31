@@ -460,7 +460,8 @@ with tabs[0]:
                 st.error("Please specify at least one ticker.")
             else:
                 if update_trading_config(user_id, new_trading_config):
-                    st.success("Trading configuration updated!")
+                    # st.success("Trading configuration updated!")
+                    st.snow()
 
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
