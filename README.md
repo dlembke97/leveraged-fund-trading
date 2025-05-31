@@ -9,12 +9,13 @@ Trading logic can be configured at https://leveraged-fund-trading-7iprpeglueepf7
 * Start with paper trading credentials to make sure your configuration feels right for you before live trading.
 
 ## Alpaca set up guide
-1. Create an account at https://alpaca.markets/
-2. Switch to Paper trading (The upper left of the window should say "Paper")
-3. Your account should automatically have (fake) funds in paper trading. Purchase some tickers that you envision using this tool with
+1. Create an account at https://alpaca.markets/  
+2. Switch to Paper trading (The upper left of the window should say “Paper”)  
+3. Your account should automatically have (fake) funds in paper trading. Purchase some tickers that you envision using this tool with  
 4. Generate your API key and Secret
-    a. Click the settings gear (bottom left) and click "Profile"
-    b. Click "Manage Accounts"
-    c. Click "Generate New Keys"
-    d. In the app, enter the resulting key and secret where prompted
+
+    a. Click the settings gear (bottom left) and click “Profile”  
+    b. Click “Manage Accounts”  
+    c. Click “Generate New Keys”  
+    d. In the app, enter the resulting key and secret where prompted  
        (you will need to be registered to the app first and logged in)
