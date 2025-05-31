@@ -152,9 +152,9 @@ with tabs[1]:
                 # Removed the lines that tried to clear admin_user_input / admin_password_input
             else:
                 st.error("Invalid admin credentials.")
-
-        # Prevent rendering the registration form until admin is logged in
-        st.stop()
+        if not st.session_state["admin_logged_in"]:
+            # Prevent rendering the registration form until admin is logged in
+            st.stop()
 
     # ─── Actual Registration Form ───────────────────────────────────────────
     st.markdown("---")
