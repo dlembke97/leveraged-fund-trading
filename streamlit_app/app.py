@@ -401,7 +401,8 @@ with tabs[0]:
                 help="Enter tickers you wish to configure, e.g. TQQQ, SPY",
                 key="tc_tickers_str"
             )
-            st.rerun()
+            if st.button(f"Update Ticker List"):
+                st.rerun()
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
             new_trading_config = {}
