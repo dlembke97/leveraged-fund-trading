@@ -35,10 +35,10 @@ jobs:
           # Create a local folder for the layer
           mkdir -p layer/python
 
-          # Use the Lambci container to install cryptography, bcrypt, etc.
+          # Use the AWS SAM build image (Amazon Linux 2) to install our wheels
           docker run --rm \
             -v "${{ github.workspace }}/layer/python":/opt/python \
-            lambci/lambda:build-python3.11 \
+            public.ecr.aws/sam/build-python3.11:latest \
             /bin/bash -c "pip install --no-cache-dir \
               cryptography \
               bcrypt \
@@ -46,7 +46,7 @@ jobs:
               pandas_market_calendars \
               -t /opt/python"
 
-          # Remove any leftover metadata to slim down the layer
+          # Remove any leftover metadata to shrink the layer size
           find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
 
       - name: Package Lambda layer
