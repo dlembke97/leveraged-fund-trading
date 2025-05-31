@@ -96,7 +96,7 @@ def update_trading_config(user_id: str, config: dict) -> bool:
         return False
 
 
-def edit_trigger_quantity_table(key_prefix: str, prev_triggers: list, prev_quantities: list):
+def edit_trigger_quantity_table(key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None):
     """
     Renders a two‐column data_editor labelled "Trigger" and "Quantity (USD)".
     Returns (List[int], List[Decimal]) based on the edited DataFrame.
@@ -105,6 +105,9 @@ def edit_trigger_quantity_table(key_prefix: str, prev_triggers: list, prev_quant
         "Trigger": prev_triggers,
         "Quantity (USD)": [float(q) for q in prev_quantities]
     }).reset_index(drop=True)
+
+    if table_title:
+        st.write(table_title)
 
     edited = st.data_editor(
         df,
@@ -227,7 +230,7 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
 
 # ─── STREAMLIT APP LAYOUT ─────────────────────────────────────────────────────
 st.set_page_config(page_title="Trading Bot App", layout="centered")
-tabs = st.tabs(["🔒 User Login", "📝 Registration (Admin Only)"])
+tabs = st.tabs(["Trading Selections", "📝 Registration (Admin Only)"])
 
 
 # ─── TAB 1: USER LOGIN & TRADING CONFIG ────────────────────────────────────────
@@ -384,7 +387,7 @@ with tabs[0]:
 
         # ── TRADING CONFIGURATION SECTION ──────────────────────────────────────
         st.markdown("---")
-        st.subheader("Trading Configuration")
+        st.subheader("Threshold Based Trading Configuration")
 
         existing_config = item.get("trading_config", {})
 
@@ -398,6 +401,7 @@ with tabs[0]:
                 help="Enter tickers you wish to configure, e.g. TQQQ, SPY",
                 key="tc_tickers_str"
             )
+            st.rerun()
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
             new_trading_config = {}
@@ -410,7 +414,8 @@ with tabs[0]:
                 buy_trigs, buy_qs = edit_trigger_quantity_table(
                     key_prefix=f"buy_{ticker}",
                     prev_triggers=prev.get("buy_triggers", []),
-                    prev_quantities=prev.get("buy_quantities", [])
+                    prev_quantities=prev.get("buy_quantities", []),
+                    table_title=f"{ticker} Buy Thresholds/Dollar Amounts"
                 )
 
                 # 2) Buy‐Funding Source
@@ -423,7 +428,8 @@ with tabs[0]:
                 sell_trigs, sell_qs = edit_trigger_quantity_table(
                     key_prefix=f"sell_{ticker}",
                     prev_triggers=prev.get("sell_triggers", []),
-                    prev_quantities=prev.get("sell_quantities", [])
+                    prev_quantities=prev.get("sell_quantities", []),
+                    table_title=f"{ticker} Sell Thresholds/Dollar Amounts"
                 )
 
                 # 4) Sell‐Proceeds Re‐Allocation
