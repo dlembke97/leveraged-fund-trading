@@ -437,7 +437,15 @@ with tabs[0]:
                 prev_block=prev.get("sell_reallocate", {"enabled": False})
             )
 
-            # 5) Build per‐ticker dictionary
+            # 5) Consider Long vs Short Term Capital Gains?
+            consider_ltcg = st.checkbox(
+                "Consider Long vs Short Term Capital Gains",
+                help="If set to true, the bot may decide not to trade even if a threshold is it. For example, say that a buy on TQQQ is triggered and the funds for buying will be obtained by selling VTI. All of the VTI funds are currently short term capital gains but in 1 week they will be long term. The bot will likely determine that VTI should not be sold yet and will not make the trade. An email notification of this event will still be sent",
+                value=prev.get("consider_long_vs_short_term_gains", False),
+                key=f"ltcg_{ticker}"
+            )
+
+            # 6) Build per‐ticker dictionary
             new_trading_config[ticker] = {
                 "buy_triggers": buy_trigs,
                 "buy_quantities": buy_qs,
@@ -447,12 +455,14 @@ with tabs[0]:
                 "sell_quantities": sell_qs,
                 "sell_reallocate": sell_realloc,
 
+                "consider_long_vs_short_term_gains": consider_ltcg,
+
                 "last_buy_price": prev.get("last_buy_price"),
                 "last_sell_price": prev.get("last_sell_price"),
                 "triggered_buy_levels": prev.get("triggered_buy_levels", []),
                 "triggered_sell_levels": prev.get("triggered_sell_levels", []),
             }
-
+            
             st.markdown("---")
 
         if st.button("Save Trading Configuration"):
