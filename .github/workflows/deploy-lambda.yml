@@ -28,11 +28,25 @@ jobs:
 
       # ─── Layer build & publish ────────────────────────────────────────────────────
 
-      - name: Install layer dependencies
+      - name: Install layer dependencies (build on Amazon Linux 2)
         run: |
           python -m pip install --upgrade pip
+
+          # Create a local folder for the layer
           mkdir -p layer/python
-          pip install --no-cache-dir cryptography bcrypt alpaca-trade-api pandas_market_calendars -t layer/python
+
+          # Use the Lambci container to install cryptography, bcrypt, etc.
+          docker run --rm \
+            -v "${{ github.workspace }}/layer/python":/opt/python \
+            lambci/lambda:build-python3.11 \
+            /bin/bash -c "pip install --no-cache-dir \
+              cryptography \
+              bcrypt \
+              alpaca-trade-api \
+              pandas_market_calendars \
+              -t /opt/python"
+
+          # Remove any leftover metadata to slim down the layer
           find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
 
       - name: Package Lambda layer
