@@ -1,6 +1,7 @@
 import streamlit as st
 import boto3
 import bcrypt
+from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
 
@@ -269,7 +270,7 @@ with tabs[0]:
                 st.session_state["show_update_credentials"] = False
                 st.rerun()
 
-        # ─── Trading Configuration Section (with amounts) ──────────────────────────
+        # ─── Trading Configuration Section (with quantities) ────────────────────────
         st.markdown("---")
         st.subheader("Trading Configuration")
 
@@ -291,7 +292,7 @@ with tabs[0]:
                 st.markdown(f"**{ticker}** configuration")
                 prev = existing_config.get(ticker, {})
 
-                # Prefill previous triggers and quantities
+                # Previous triggers and quantities (Decimals in DynamoDB)
                 prev_buy = prev.get("buy_triggers", [])
                 prev_buy_qty = prev.get("buy_quantities", [])
                 prev_sell = prev.get("sell_triggers", [])
@@ -330,10 +331,14 @@ with tabs[0]:
                     except ValueError:
                         return []
 
+                # Convert to native Python then to Decimal
                 buy_triggers = parse_int_list(buy_str)
-                buy_quantities = parse_float_list(buy_qty_str)
+                raw_buy_qty = parse_float_list(buy_qty_str)
+                buy_quantities = [Decimal(str(x)) for x in raw_buy_qty]
+
                 sell_triggers = parse_int_list(sell_str)
-                sell_quantities = parse_float_list(sell_qty_str)
+                raw_sell_qty = parse_float_list(sell_qty_str)
+                sell_quantities = [Decimal(str(x)) for x in raw_sell_qty]
 
                 new_trading_config[ticker] = {
                     "buy_triggers": buy_triggers,
