@@ -119,8 +119,8 @@ if submitted:
             # === Inject ONE HTML block that loads Firebase SDK and runs registration logic ===
             html_code = f"""
             <!-- 1) Load Firebase SDKs via <script> tags (app + messaging) -->
-            <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js"></script>
-            <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js"></script>
+            <script src="https://www.gstatic.com/firebasejs/11.8.0/firebase-app.js"></script>
+            <script src="https://www.gstatic.com/firebasejs/11.8.0/firebase-messaging.js"></script>
 
             <script>
             // Wrap everything in an async IIFE so we can await each step
@@ -199,8 +199,8 @@ if submitted:
             #   console.log('🔔 Starting push registration flow');
             #   try {{
             #     // Load Firebase modules dynamically
-            #     const fbAppModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
-            #     const fbMsgModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
+            #     const fbAppModule = await import('https://www.gstatic.com/firebasejs/11.8.0/firebase-app.js');
+            #     const fbMsgModule = await import('https://www.gstatic.com/firebasejs/11.8.0/firebase-messaging.js');
             #     const initializeApp = fbAppModule.initializeApp;
             #     const getMessaging = fbMsgModule.getMessaging;
             #     const getToken = fbMsgModule.getToken;
