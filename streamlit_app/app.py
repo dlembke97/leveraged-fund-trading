@@ -141,7 +141,7 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
     prev_type = prev_block.get("type", "cash")
     st.write("**Buy‐Funding Source**")
     choice = st.radio(
-        f"{key_prefix} → When a BUY triggers, use:",
+        f"When a BUY triggers, use:",
         options=["Cash Balance", "Sell Other Ticker(s)"],
         index=0 if prev_type == "cash" else 1,
         key=f"buy_fund_type_{key_prefix}",
@@ -190,7 +190,7 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
     enabled = prev_block.get("enabled", False)
     st.write("**Sell‐Proceeds Re‐Allocation**")
     choice = st.radio(
-        f"{key_prefix} → After a SELL triggers, should proceeds be re‐invested?",
+        f"Reinvest Proceeds from triggered Sells?",
         options=["No (keep in cash)", "Yes (allocate to other tickers)"],
         index=0 if not enabled else 1,
         key=f"sell_realloc_type_{key_prefix}",
@@ -460,9 +460,7 @@ with tabs[0]:
                 st.error("Please specify at least one ticker.")
             else:
                 if update_trading_config(user_id, new_trading_config):
-                    # st.success("Trading configuration updated!")
-                    st.toast("Trading configuration updated!")
-
+                    st.success("Trading configuration updated!")
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
 with tabs[1]:
