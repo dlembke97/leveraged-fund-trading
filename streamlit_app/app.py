@@ -310,6 +310,7 @@ with tabs[0]:
                 st.write("Buy Levels and Quantities")
                 edited_buy = st.data_editor(
                     buy_df,
+                    hide_index=True, 
                     num_rows="dynamic",
                     key=f"buy_table_{ticker}"
                 )
@@ -324,6 +325,7 @@ with tabs[0]:
                 st.write("Sell Levels and Quantities")
                 edited_sell = st.data_editor(
                     sell_df,
+                    hide_index=True, 
                     num_rows="dynamic",
                     key=f"sell_table_{ticker}"
                 )
