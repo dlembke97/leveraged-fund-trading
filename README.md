@@ -1,88 +1,19 @@
 # AWS Lambda Trading Bot
 
-This project contains the AWS Lambda functions and supporting code for running your leveraged trading bot on a serverless schedule.
+Trading logic can be configured at https://leveraged-fund-trading-7iprpeglueepf7impssuqb.streamlit.app/. If you are not a registered user, you will need to reach out to dlembke97@gmail.com to have become registered. 
 
-## Directory Structure
+## Key notes
+* Current trading logic is strictly threshold based. You are in control of what/how much you buy and sell. This app simply takes the rules you give it and runs them live so you don't have to constantly monitor your portfolio
+* An alpaca account is required to run the trading bot on your portfolio. You will need to input your alpaca api key and api secret on the streamlit trading app. These fields are encrypted and saved to your user in a secure dynamodb table.Eventually these should instead be stored using AWS Secrets for better security, but thats a paid service and I'm cheap so I'm sticking with dynamodb for now.
+* If you enter your email in the streamlit trading app when your user is registered, you will be emailed when any trades are triggered.
+* Start with paper trading credentials to make sure your configuration feels right for you before live trading.
 
-- lambda_bot/
-  - `lambda_function.py`: Main Lambda handler implementing the trading cycle.
-  - `common_scripts.py`: Logger setup and EmailManager for sending alerts.
-  - `requirements.txt`: Python dependencies.
-
-## Setup
-
-1. **Create DynamoDB Table**  
-   ```bash
-   aws dynamodb create-table \
-     --table-name Users \
-     --attribute-definitions AttributeName=user_id,AttributeType=S \
-     --key-schema AttributeName=user_id,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST
-   ```
-
-2. **Configure AWS Lambda**  
-   - In the AWS Console, create a new Lambda function using Python 3.11.  
-   - Upload the contents of `lambda_bot/` as a ZIP file or via the AWS CLI:  
-     ```bash
-     zip -r deploy.zip lambda_function.py common_scripts.py requirements.txt
-     aws lambda update-function-code --function-name MyTradingBot --zip-file fileb://deploy.zip
-     ```
-   - Set environment variable `USERS_TABLE=Users` in the Lambda configuration.
-
-3. **Set Permissions**  
-   Ensure the Lambda execution role has permissions:
-   - `dynamodb:Scan`, `dynamodb:UpdateItem` on the `Users` table.  
-   - `lambda:InvokeFunction` if using EventBridge Scheduler.  
-
-4. **Schedule the Lambda**  
-   Create an EventBridge Scheduler rule to run every minute or at market open:
-   ```bash
-   aws events put-rule \
-     --name cron-every-minute \
-     --schedule-expression "rate(1 minute)"
-   aws events put-targets \
-     --rule cron-every-minute \
-     --targets "Id"="1","Arn"="arn:aws:lambda:REGION:ACCOUNT_ID:function:MyTradingBot"
-   ```
-   Grant permission:
-   ```bash
-   aws lambda add-permission \
-     --function-name MyTradingBot \
-     --statement-id "AllowEventBridgeInvoke" \
-     --action "lambda:InvokeFunction" \
-     --principal events.amazonaws.com \
-     --source-arn "arn:aws:events:REGION:ACCOUNT_ID:rule/cron-every-minute"
-   ```
-
-5. **Environment Variables**  
-   - `USERS_TABLE`: DynamoDB table name (default "Users").
-   - (Optional) Use a `.env` file with `AWS_PROFILE` etc if using the AWS CLI locally.
-
-## Local Testing
-
-You can test the handler locally with a simple Python script:
-
-```python
-from lambda_bot.lambda_function import lambda_handler
-
-print(lambda_handler({}, None))
-```
-
-## Dependencies
-
-- boto3
-- alpaca-trade-api
-- python-dotenv
-- pandas-market-calendars
-
-Install locally via:
-
-```bash
-pip install -r lambda_bot/requirements.txt
-```
-
-## Notes
-
-- The Lambda only runs when the market is open (uses NYSE calendar).
-- State (trading_config) is stored per user in DynamoDB.
-- Email notifications require valid SMTP credentials via `EmailManager`.
+## Alpaca set up guide
+1. Create an account at https://alpaca.markets/
+2. Switch to Paper trading (The upper left of the window should say "Paper")
+3. Your account should automatically have (fake) funds in paper trading. Purchase some tickers that you envision using this tool with
+4. Generate you API key and Secret
+   a. Click the settings gear (bottom left) and click "Profile"
+   b. Click "Manage Accounts"
+   c. Click "Generate New Keys".
+   d. In the app, enter the resulting key and secret where prompted (you will need to be registered to the app first and logged in)
