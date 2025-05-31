@@ -388,7 +388,7 @@ with tabs[0]:
         # ── TRADING CONFIGURATION SECTION ──────────────────────────────────────
         st.markdown("---")
         st.header("Threshold Based Trading Configuration")
-
+        st.info("Note that all tables below are editable. Simply double click into any cell to overwrite a given value. These work similar to excel, where you can copy and past multiple selected cells, or even drag the bottom right corner of a cell to copy it down. New rows can be added to each table as well by clicking the empty bottom cell of a given table")
         existing_config = item.get("trading_config", {})
 
         # Let user add/remove tickers in one line
