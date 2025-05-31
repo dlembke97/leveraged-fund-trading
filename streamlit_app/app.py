@@ -25,17 +25,11 @@ VALID_USERS = {
 # ─── Helper Functions ──────────────────────────────────────────────────────────
 
 def fernet_encrypt(plaintext: str) -> str:
-    """
-    Encrypt a UTF-8 string with Fernet, return a Base64‐encoded result.
-    """
     token: bytes = fernet.encrypt(plaintext.encode("utf-8"))
     return token.decode("utf-8")
 
 
 def fernet_decrypt(token_b64: str) -> str:
-    """
-    Decrypt a Base64‐encoded Fernet token, return the plaintext string.
-    """
     plaintext: bytes = fernet.decrypt(token_b64.encode("utf-8"))
     return plaintext.decode("utf-8")
 
@@ -70,62 +64,27 @@ st.set_page_config(page_title="Trading Bot App", layout="centered")
 
 tabs = st.tabs(["🔒 User Login", "📝 Registration (Admin Only)"])
 
-# ─── Tab 1: User Login (with Change Password) ─────────────────────────────────
+# ─── Tab 1: User Login (with Change Password Button) ──────────────────────────
 with tabs[0]:
     st.title("🔒 User Login")
 
+    # Initialize session state flags
     if "user_logged_in" not in st.session_state:
         st.session_state["user_logged_in"] = False
+    if "show_change_pw" not in st.session_state:
+        st.session_state["show_change_pw"] = False
 
-    with st.form("user_login_form"):
-        user_id = st.text_input("Username", key="login_user_id")
-        password = st.text_input("Password", type="password", key="login_password")
-
-        change_pw = st.checkbox("Change Password?", key="change_pw_checkbox")
-        if change_pw:
-            current_pwd = st.text_input(
-                "Current Password", type="password", key="current_password"
-            )
-            new_pwd = st.text_input("New Password", type="password", key="new_password")
-            confirm_new = st.text_input(
-                "Confirm New Password", type="password", key="confirm_new_password"
-            )
-            submit_button = st.form_submit_button("Update Password")
-        else:
-            submit_button = st.form_submit_button("Log In")
-
-    if submit_button:
-        if not user_id:
-            st.error("Please enter your username.")
-        else:
-            item = get_user_item(user_id)
-
-            if change_pw:
-                # ─── Change Password Logic ─────────────────────────────────────
-                if not (current_pwd and new_pwd and confirm_new):
-                    st.error("All password fields are required to change your password.")
-                else:
-                    if not item:
-                        st.error(
-                            f"User not found. Please email {SENDER_EMAIL} "
-                            "with your preferred username to register!"
-                        )
-                    else:
-                        stored_hash = item.get("password_hash", "")
-                        if not bcrypt.checkpw(current_pwd.encode("utf-8"), stored_hash.encode("utf-8")):
-                            st.error("Current password is incorrect.")
-                        elif new_pwd != confirm_new:
-                            st.error("New password entries do not match.")
-                        else:
-                            success = update_user_password(user_id, new_pwd)
-                            if success:
-                                st.success("Password updated successfully!")
-                                st.session_state["login_password"] = ""
-                                st.session_state["current_password"] = ""
-                                st.session_state["new_password"] = ""
-                                st.session_state["confirm_new_password"] = ""
+    # If not in change-password mode, show the login form
+    if not st.session_state["show_change_pw"]:
+        with st.form("login_form"):
+            user_id = st.text_input("Username", key="login_user_id")
+            password = st.text_input("Password", type="password", key="login_password")
+            submitted = st.form_submit_button("Log In")
+        if submitted:
+            if not user_id:
+                st.error("Please enter your username.")
             else:
-                # ─── Normal Login Logic ────────────────────────────────────────
+                item = get_user_item(user_id)
                 if not item:
                     st.error(
                         f"User not found. Please email {SENDER_EMAIL} "
@@ -134,7 +93,6 @@ with tabs[0]:
                 else:
                     stored_hash = item.get("password_hash", "")
                     if bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
-                        # ─── FERNET‐DECRYPT ───────────────────────────────────
                         encrypted_key = item.get("encrypted_alpaca_key", "")
                         encrypted_secret = item.get("encrypted_alpaca_secret", "")
                         try:
@@ -146,11 +104,53 @@ with tabs[0]:
 
                         st.session_state["user_logged_in"] = True
                         st.success(f"Welcome, {user_id}! 🎉")
-                        # Now you can create an Alpaca REST client:
-                        # from alpaca_trade_api.rest import REST, TimeFrame
-                        # api = REST(alpaca_api_key, alpaca_api_secret, base_url="https://paper-api.alpaca.markets")
+                        # Instantiate Alpaca client here if needed
                     else:
                         st.error(f"Password for '{user_id}' incorrect.")
+
+        # Show the "Change Password" button below the login form
+        if st.button("Change Password"):
+            st.session_state["show_change_pw"] = True
+
+    # If the user clicked "Change Password", show the change-password form
+    else:
+        st.info("🔑 Change Your Password")
+        with st.form("change_password_form"):
+            user_id_cp = st.text_input("Username", key="cp_user_id")
+            current_pwd = st.text_input("Current Password", type="password", key="cp_current_password")
+            new_pwd = st.text_input("New Password", type="password", key="cp_new_password")
+            confirm_new = st.text_input("Confirm New Password", type="password", key="cp_confirm_new_password")
+            submitted_cp = st.form_submit_button("Update Password")
+        if submitted_cp:
+            if not (user_id_cp and current_pwd and new_pwd and confirm_new):
+                st.error("All fields are required to change your password.")
+            else:
+                item_cp = get_user_item(user_id_cp)
+                if not item_cp:
+                    st.error(
+                        f"User not found. Please email {SENDER_EMAIL} "
+                        "with your preferred username to register!"
+                    )
+                else:
+                    stored_hash_cp = item_cp.get("password_hash", "")
+                    if not bcrypt.checkpw(current_pwd.encode("utf-8"), stored_hash_cp.encode("utf-8")):
+                        st.error("Current password is incorrect.")
+                    elif new_pwd != confirm_new:
+                        st.error("New password entries do not match.")
+                    else:
+                        success_cp = update_user_password(user_id_cp, new_pwd)
+                        if success_cp:
+                            st.success("Password updated successfully!")
+                            # Reset flags and clear form state
+                            st.session_state["show_change_pw"] = False
+                            st.session_state["cp_user_id"] = ""
+                            st.session_state["cp_current_password"] = ""
+                            st.session_state["cp_new_password"] = ""
+                            st.session_state["cp_confirm_new_password"] = ""
+
+        # Show a "Back to Login" button
+        if st.button("Back to Login"):
+            st.session_state["show_change_pw"] = False
 
 
 # ─── Tab 2: Registration (Admin Only) ─────────────────────────────────────────
@@ -162,14 +162,10 @@ with tabs[1]:
 
     if not st.session_state["admin_logged_in"]:
         st.info("Please log in as admin to register new users.")
-
         with st.form("admin_login_form"):
             admin_user = st.text_input("Admin Username", key="admin_user_input")
-            admin_pwd = st.text_input(
-                "Admin Password", type="password", key="admin_password_input"
-            )
+            admin_pwd = st.text_input("Admin Password", type="password", key="admin_password_input")
             login_admin = st.form_submit_button("Log in as Admin")
-
         if login_admin:
             if VALID_USERS.get(admin_user) == admin_pwd:
                 st.session_state["admin_logged_in"] = True
@@ -179,7 +175,6 @@ with tabs[1]:
         if not st.session_state["admin_logged_in"]:
             st.stop()
 
-    # ─── Actual Registration Form ───────────────────────────────────────────
     st.markdown("---")
     st.markdown("**Create a new user account with custom trading configuration.**")
 
@@ -219,7 +214,6 @@ with tabs[1]:
         submit = st.form_submit_button("Register")
 
     if submit:
-        # Basic required‐fields check
         if not all([new_user_id, receiver_email, raw_trading_password, raw_alpaca_api_key, raw_alpaca_api_secret]):
             st.error("All primary fields are required. Please fill in every field.")
         else:
@@ -227,7 +221,6 @@ with tabs[1]:
             if existing:
                 st.error(f"User '{new_user_id}' already exists. Please choose a different username.")
             else:
-                # ─── FERNET‐ENCRYPT ───────────────────────────────────────
                 encrypted_key = fernet_encrypt(raw_alpaca_api_key)
                 encrypted_secret = fernet_encrypt(raw_alpaca_api_secret)
                 password_hash = bcrypt.hashpw(raw_trading_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -244,11 +237,10 @@ with tabs[1]:
                     table.put_item(Item=item)
                     st.success(f"User '{new_user_id}' registered successfully!")
                     st.balloons()
-                    # Clear form state
                     st.session_state["new_user_id"] = ""
                     st.session_state["receiver_email"] = ""
-                    st.session_state["trading_app_password"] = ""
-                    st.session_state["alpaca_api_key"] = ""
-                    st.session_state["alpaca_api_secret"] = ""
+                    st.session_state["raw_trading_password"] = ""
+                    st.session_state["raw_alpaca_api_key"] = ""
+                    st.session_state["raw_alpaca_api_secret"] = ""
                 except ClientError as e:
                     st.error(f"Registration failed: {e.response['Error']['Message']}")
