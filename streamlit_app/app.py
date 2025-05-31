@@ -7,9 +7,9 @@ from botocore.exceptions import ClientError
 # ---------- Configuration ----------
 TABLE_NAME = os.getenv('TABLE_NAME', 'Users')
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')
-SENDER_EMAIL_PASSWORD = st.secrets('SENDER_EMAIL_PASSWORD')
-SENDER_EMAIL = st.secrets('SENDER_EMAIL')
-DAVID_USER_PASSWORD = st.secrets('DAVID_USER_PASSWORD')
+SENDER_EMAIL_PASSWORD = st.secrets['SENDER_EMAIL_PASSWORD']
+SENDER_EMAIL = st.secrets['SENDER_EMAIL']
+DAVID_USER_PASSWORD = st.secrets['DAVID_USER_PASSWORD']
 
 dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 table = dynamodb.Table(TABLE_NAME)
