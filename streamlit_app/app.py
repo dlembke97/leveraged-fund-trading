@@ -402,68 +402,64 @@ with tabs[0]:
             help="Enter tickers you wish to configure, e.g. TQQQ, SPY",
             key="tc_tickers_str"
         )
-        if st.button(f"Update Ticker List"):
-            st.rerun()
+        # if st.button(f"Update Ticker List"):
+        #     st.rerun()
 
-        with st.form("trading_config_form"):
+        tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
-            tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
+        new_trading_config = {}
 
-            new_trading_config = {}
+        for ticker in tickers:
+            st.markdown(f"### {ticker} configuration")
+            prev = existing_config.get(ticker, {})
 
-            for ticker in tickers:
-                st.markdown(f"### {ticker} configuration")
-                prev = existing_config.get(ticker, {})
+            # 1) Buy Levels & Quantities
+            buy_trigs, buy_qs = edit_trigger_quantity_table(
+                key_prefix=f"buy_{ticker}",
+                prev_triggers=prev.get("buy_triggers", []),
+                prev_quantities=prev.get("buy_quantities", []),
+                table_title=f"{ticker} Buy Thresholds/Dollar Amounts"
+            )
 
-                # 1) Buy Levels & Quantities
-                buy_trigs, buy_qs = edit_trigger_quantity_table(
-                    key_prefix=f"buy_{ticker}",
-                    prev_triggers=prev.get("buy_triggers", []),
-                    prev_quantities=prev.get("buy_quantities", []),
-                    table_title=f"{ticker} Buy Thresholds/Dollar Amounts"
-                )
+            # 2) Buy‐Funding Source
+            buy_fund = render_buy_funding_block(
+                key_prefix=f"buyfund_{ticker}",
+                prev_block=prev.get("buy_funding", {"type": "cash"})
+            )
 
-                # 2) Buy‐Funding Source
-                buy_fund = render_buy_funding_block(
-                    key_prefix=f"buyfund_{ticker}",
-                    prev_block=prev.get("buy_funding", {"type": "cash"})
-                )
+            # 3) Sell Levels & Quantities
+            sell_trigs, sell_qs = edit_trigger_quantity_table(
+                key_prefix=f"sell_{ticker}",
+                prev_triggers=prev.get("sell_triggers", []),
+                prev_quantities=prev.get("sell_quantities", []),
+                table_title=f"{ticker} Sell Thresholds/Dollar Amounts"
+            )
 
-                # 3) Sell Levels & Quantities
-                sell_trigs, sell_qs = edit_trigger_quantity_table(
-                    key_prefix=f"sell_{ticker}",
-                    prev_triggers=prev.get("sell_triggers", []),
-                    prev_quantities=prev.get("sell_quantities", []),
-                    table_title=f"{ticker} Sell Thresholds/Dollar Amounts"
-                )
+            # 4) Sell‐Proceeds Re‐Allocation
+            sell_realloc = render_sell_realloc_block(
+                key_prefix=f"sellrealloc_{ticker}",
+                prev_block=prev.get("sell_reallocate", {"enabled": False})
+            )
 
-                # 4) Sell‐Proceeds Re‐Allocation
-                sell_realloc = render_sell_realloc_block(
-                    key_prefix=f"sellrealloc_{ticker}",
-                    prev_block=prev.get("sell_reallocate", {"enabled": False})
-                )
+            # 5) Build per‐ticker dictionary
+            new_trading_config[ticker] = {
+                "buy_triggers": buy_trigs,
+                "buy_quantities": buy_qs,
+                "buy_funding": buy_fund,
 
-                # 5) Build per‐ticker dictionary
-                new_trading_config[ticker] = {
-                    "buy_triggers": buy_trigs,
-                    "buy_quantities": buy_qs,
-                    "buy_funding": buy_fund,
+                "sell_triggers": sell_trigs,
+                "sell_quantities": sell_qs,
+                "sell_reallocate": sell_realloc,
 
-                    "sell_triggers": sell_trigs,
-                    "sell_quantities": sell_qs,
-                    "sell_reallocate": sell_realloc,
+                "last_buy_price": prev.get("last_buy_price"),
+                "last_sell_price": prev.get("last_sell_price"),
+                "triggered_buy_levels": prev.get("triggered_buy_levels", []),
+                "triggered_sell_levels": prev.get("triggered_sell_levels", []),
+            }
 
-                    "last_buy_price": prev.get("last_buy_price"),
-                    "last_sell_price": prev.get("last_sell_price"),
-                    "triggered_buy_levels": prev.get("triggered_buy_levels", []),
-                    "triggered_sell_levels": prev.get("triggered_sell_levels", []),
-                }
+            st.markdown("---")
 
-                st.markdown("---")
-
-            save_config = st.form_submit_button("Save Trading Configuration")
-
-        if save_config:
+        if st.button("Save Trading Configuration"):
             if not tickers:
                 st.error("Please specify at least one ticker.")
             else:
