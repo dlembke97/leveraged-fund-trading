@@ -3,6 +3,8 @@ name: Build & Deploy Trading Lambdas
 on:
   push:
     paths:
+      # NOTE: Eventually should only run on merges to main. 
+      # For now will leave as any branch because no dev environment setup in AWS
       # 1. Trigger when this workflow file is modified:
       - '.github/workflows/deploy-lambda.yml'
       # 2. Trigger when anything in lambda_bot/ changes:
