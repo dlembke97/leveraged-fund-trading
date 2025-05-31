@@ -111,6 +111,7 @@ with tabs[0]:
         # Show the "Change Password" button below the login form
         if st.button("Change Password"):
             st.session_state["show_change_pw"] = True
+            st.rerun()
 
     # If the user clicked "Change Password", show the change-password form
     else:
