@@ -1,17 +1,17 @@
 import os
-import json
 import time
 import datetime
 from zoneinfo import ZoneInfo
 
 import boto3
+from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
 from alpaca_trade_api.rest import REST, TimeFrame, APIError
 import pandas_market_calendars as mcal
 from lambda_bot.common_scripts import EmailManager, setup_logger
 
-#─── Setup ───────────────────────────────────────────────
+# ─── Setup ───────────────────────────────────────────────
 logger = setup_logger("lambda_bot")
 
 dynamodb = boto3.resource("dynamodb")
@@ -26,6 +26,7 @@ SENDER_EMAIL_PASSWORD = os.environ["SENDER_EMAIL_PASSWORD"]
 
 # NYSE calendar for market hours/holidays:
 NYSE = mcal.get_calendar("NYSE")
+
 
 # ─── Helper: Fetch & Decrypt Alpaca Credentials ─────────────────────────────────
 def get_decrypted_alpaca_creds(user_id: str):
@@ -49,7 +50,6 @@ def get_decrypted_alpaca_creds(user_id: str):
         raise RuntimeError("Missing encrypted Alpaca credentials in DynamoDB item.")
 
     try:
-        # Decrypt the Base64‐encoded token strings
         alpaca_api_key = fernet.decrypt(enc_key.encode("utf-8")).decode("utf-8")
         alpaca_api_secret = fernet.decrypt(enc_secret.encode("utf-8")).decode("utf-8")
     except Exception as e:
@@ -57,17 +57,18 @@ def get_decrypted_alpaca_creds(user_id: str):
 
     return alpaca_api_key, alpaca_api_secret
 
+
 def is_market_open():
     now = datetime.datetime.now(ZoneInfo("America/New_York"))
     schedule = NYSE.schedule(start_date=now.date(), end_date=now.date())
     if schedule.empty:
         return False
 
-    # Use iloc[0] to grab the only row in today's schedule
     row = schedule.iloc[0]
-    open_dt  = row["market_open"].to_pydatetime()
+    open_dt = row["market_open"].to_pydatetime()
     close_dt = row["market_close"].to_pydatetime()
     return open_dt <= now <= close_dt
+
 
 def wait_for_fill(api, order_id, interval=0.5):
     while True:
@@ -75,6 +76,7 @@ def wait_for_fill(api, order_id, interval=0.5):
         if o.status == "filled":
             return
         time.sleep(interval)
+
 
 def get_current_price(api, symbol):
     try:
@@ -89,77 +91,102 @@ def get_current_price(api, symbol):
         return bars[0].c
     return None
 
-def one_cycle(api, config, email_mgr):
+
+def one_cycle(api, config: dict, email_mgr: EmailManager):
+    """
+    Executes one round of buy/sell logic for every symbol in `config`.
+    Now treats each quantity as a dollar‐amount (notional) rather than share count.
+    """
     for symbol, cfg in config.items():
         price = get_current_price(api, symbol)
         if price is None:
             continue
 
-        # SELL logic
-        for trigger in sorted(cfg["sell_triggers"]):
-            if price >= trigger and trigger not in cfg["triggered_sell_levels"]:
+        # ─── SELL logic ─────────────────────────────────────
+        sell_pairs = sorted(
+            zip(cfg.get("sell_triggers", []), cfg.get("sell_quantities", [])),
+            key=lambda pair: pair[0]
+        )
+        for trigger, qty_decimal in sell_pairs:
+            if price >= trigger and trigger not in cfg.get("triggered_sell_levels", set()):
                 try:
+                    # Use notional = str(qty_decimal)  (dollar amount)
                     order = api.submit_order(
                         symbol=symbol,
-                        notional="200",
+                        notional=str(qty_decimal),
                         side="sell",
                         type="market",
                         time_in_force="day"
                     )
                 except APIError:
-                    logger.warning(f"Wash trade block on sell {symbol}; retrying in 1s")
+                    logger.warning(f"Wash trade block on sell {symbol}@{trigger}; retrying in 1s")
                     time.sleep(1)
                     order = api.submit_order(
                         symbol=symbol,
-                        notional="200",
+                        notional=str(qty_decimal),
                         side="sell",
                         type="market",
                         time_in_force="day"
                     )
+
                 wait_for_fill(api, order.id)
-                cfg["triggered_sell_levels"].add(trigger)
-                email_mgr.send_trigger_alert(f"{symbol} sold at {trigger}")
+                cfg.setdefault("triggered_sell_levels", set()).add(trigger)
+                email_mgr.send_trigger_alert(f"{symbol} sold at {trigger} (notional=${qty_decimal})")
                 break
 
-        # BUY logic
-        for trigger in sorted(cfg["buy_triggers"]):
-            if price <= trigger and trigger not in cfg["triggered_buy_levels"]:
+        # ─── BUY logic ──────────────────────────────────────
+        buy_pairs = sorted(
+            zip(cfg.get("buy_triggers", []), cfg.get("buy_quantities", [])),
+            key=lambda pair: pair[0],
+        )
+        for trigger, qty_decimal in buy_pairs:
+            if price <= trigger and trigger not in cfg.get("triggered_buy_levels", set()):
                 try:
                     order = api.submit_order(
                         symbol=symbol,
-                        notional="200",
+                        notional=str(qty_decimal),
                         side="buy",
                         type="market",
                         time_in_force="day"
                     )
                 except APIError:
-                    logger.warning(f"Wash trade block on buy {symbol}; retrying in 1s")
+                    logger.warning(f"Wash trade block on buy {symbol}@{trigger}; retrying in 1s")
                     time.sleep(1)
                     order = api.submit_order(
                         symbol=symbol,
-                        notional="200",
+                        notional=str(qty_decimal),
                         side="buy",
                         type="market",
                         time_in_force="day"
                     )
+
                 wait_for_fill(api, order.id)
-                cfg["triggered_buy_levels"].add(trigger)
-                email_mgr.send_trigger_alert(f"{symbol} bought at {trigger}")
+                cfg.setdefault("triggered_buy_levels", set()).add(trigger)
+                email_mgr.send_trigger_alert(f"{symbol} bought at {trigger} (notional=${qty_decimal})")
                 break
 
     return config
 
+
 def lambda_handler(event, context):
+    # Exit early if market closed
     if not is_market_open():
         logger.info("Market closed, exiting.")
         return {"statusCode": 200, "body": "Market closed"}
 
     resp = table.scan()
     users = resp.get("Items", [])
+
     for u in users:
         user_id = u.get("user_id")
         logger.info(f"Processing user {user_id}")
-        alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
+
+        try:
+            alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
+        except RuntimeError as err:
+            logger.error(f"Skipping {user_id}: {err}")
+            continue
+
         api = REST(
             alpaca_api_key,
             alpaca_api_secret,
@@ -171,12 +198,23 @@ def lambda_handler(event, context):
             receiver_email=u.get("receiver_email"),
             sender_password=SENDER_EMAIL_PASSWORD
         )
+
+        # Ensure that triggered levels are treated as sets
+        trading_cfg = u.get("trading_config", {})
+        trading_cfg.setdefault("triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", [])))
+        trading_cfg.setdefault("triggered_sell_levels", set(trading_cfg.get("triggered_sell_levels", [])))
+
         try:
-            updated = one_cycle(api, u.get("trading_config", {}), email_mgr)
+            updated_cfg = one_cycle(api, trading_cfg, email_mgr)
+
+            # Convert sets back to lists for DynamoDB
+            updated_cfg["triggered_buy_levels"] = list(updated_cfg.get("triggered_buy_levels", []))
+            updated_cfg["triggered_sell_levels"] = list(updated_cfg.get("triggered_sell_levels", []))
+
             table.update_item(
                 Key={"user_id": user_id},
                 UpdateExpression="SET trading_config = :cfg",
-                ExpressionAttributeValues={":cfg": updated}
+                ExpressionAttributeValues={":cfg": updated_cfg}
             )
         except Exception as e:
             logger.error(f"Error for user {user_id}: {e}", exc_info=True)

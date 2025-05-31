@@ -373,7 +373,6 @@ with tabs[0]:
                 updated = update_trading_config(user_id, new_trading_config)
                 if updated:
                     st.success("Trading configuration updated!")
-                    st.rerun()
 
 
 # ─── Tab 2: Registration (Admin Only) ─────────────────────────────────────────
