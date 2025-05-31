@@ -13,11 +13,16 @@ from lambda_bot.common_scripts import EmailManager, setup_logger
 
 #─── Setup ───────────────────────────────────────────────
 logger = setup_logger("lambda_bot")
+
 dynamodb = boto3.resource("dynamodb")
 USERS_TABLE = os.getenv("USERS_TABLE", "Users")
 table = dynamodb.Table(USERS_TABLE)
+
 FERNET_KEY = os.environ["FERNET_KEY"].encode("utf-8")
 fernet = Fernet(FERNET_KEY)
+
+SENDER_EMAIL = os.environ["SENDER_EMAIL"]
+SENDER_EMAIL_PASSWORD = os.environ["SENDER_EMAIL_PASSWORD"]
 
 # NYSE calendar for market hours/holidays:
 NYSE = mcal.get_calendar("NYSE")
@@ -160,11 +165,11 @@ def lambda_handler(event, context):
             alpaca_api_secret,
             base_url="https://paper-api.alpaca.markets"
         )
-        logger.info(alpaca_api_key)
+
         email_mgr = EmailManager(
-            sender_email=u.get("sender_email"),
+            sender_email=SENDER_EMAIL,
             receiver_email=u.get("receiver_email"),
-            sender_password=u.get("sender_email_password")
+            sender_password=SENDER_EMAIL_PASSWORD
         )
         try:
             updated = one_cycle(api, u.get("trading_config", {}), email_mgr)
