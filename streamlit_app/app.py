@@ -17,15 +17,15 @@ fernet = Fernet(FERNET_KEY)
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 table = dynamodb.Table(TABLE_NAME)
 
-VALID_USERS = {
-    "david": st.secrets["DAVID_USER_PASSWORD"]
-}
+VALID_USERS = {"david": st.secrets["DAVID_USER_PASSWORD"]}
 
 
 # ─── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
 
+
 def fernet_encrypt(plaintext: str) -> str:
     return fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+
 
 def fernet_decrypt(token_b64: str) -> str:
     return fernet.decrypt(token_b64.encode("utf-8")).decode("utf-8")
@@ -41,7 +41,9 @@ def get_user_item(user_id: str):
 
 
 def update_user_password(user_id: str, new_password: str) -> bool:
-    hashed = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    hashed = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode(
+        "utf-8"
+    )
     try:
         table.update_item(
             Key={"user_id": user_id},
@@ -54,7 +56,9 @@ def update_user_password(user_id: str, new_password: str) -> bool:
         return False
 
 
-def update_user_credentials_partial(user_id: str, email: str, alpaca_key: str, alpaca_secret: str) -> bool:
+def update_user_credentials_partial(
+    user_id: str, email: str, alpaca_key: str, alpaca_secret: str
+) -> bool:
     expressions = []
     values = {}
     if email:
@@ -96,24 +100,25 @@ def update_trading_config(user_id: str, config: dict) -> bool:
         return False
 
 
-def edit_trigger_quantity_table(key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None):
+def edit_trigger_quantity_table(
+    key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None
+):
     """
     Renders a two‐column data_editor labelled "Trigger" and "Quantity (USD)".
     Returns (List[int], List[Decimal]) based on the edited DataFrame.
     """
-    df = pd.DataFrame({
-        "Trigger": prev_triggers,
-        "Quantity (USD)": [float(q) for q in prev_quantities]
-    }).reset_index(drop=True)
+    df = pd.DataFrame(
+        {
+            "Trigger": prev_triggers,
+            "Quantity (USD)": [float(q) for q in prev_quantities],
+        }
+    ).reset_index(drop=True)
 
     if table_title:
         st.write(table_title)
 
     edited = st.data_editor(
-        df,
-        num_rows="dynamic",
-        hide_index=True,
-        key=f"{key_prefix}_table"
+        df, num_rows="dynamic", hide_index=True, key=f"{key_prefix}_table"
     )
 
     triggers, quantities = [], []
@@ -154,16 +159,20 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
         result["type"] = "sell"
         st.write("Specify ticker(s) to sell and proportions (must sum to 1.0):")
         prev_sources = prev_block.get("sources", [])
-        df = pd.DataFrame({
-            "Ticker": pd.Series([row.get("ticker", "") for row in prev_sources], dtype="string"),
-            "Proportion": pd.Series([float(row.get("proportion", 0)) for row in prev_sources], dtype="float")
-        }).reset_index(drop=True)
+        df = pd.DataFrame(
+            {
+                "Ticker": pd.Series(
+                    [row.get("ticker", "") for row in prev_sources], dtype="string"
+                ),
+                "Proportion": pd.Series(
+                    [float(row.get("proportion", 0)) for row in prev_sources],
+                    dtype="float",
+                ),
+            }
+        ).reset_index(drop=True)
 
         edited = st.data_editor(
-            df,
-            num_rows="dynamic",
-            hide_index=True,
-            key=f"buy_src_table_{key_prefix}"
+            df, num_rows="dynamic", hide_index=True, key=f"buy_src_table_{key_prefix}"
         )
 
         sources = []
@@ -171,7 +180,12 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
             tkr, prop = row["Ticker"], row["Proportion"]
             if pd.notna(tkr) and tkr.strip() and pd.notna(prop):
                 try:
-                    sources.append({"ticker": tkr.strip().upper(), "proportion": Decimal(str(float(prop)))})
+                    sources.append(
+                        {
+                            "ticker": tkr.strip().upper(),
+                            "proportion": Decimal(str(float(prop))),
+                        }
+                    )
                 except Exception:
                     pass
         result["sources"] = sources
@@ -203,16 +217,20 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
         result["enabled"] = True
         st.write("Specify ticker(s) and proportions (must sum to 1.0):")
         prev_targets = prev_block.get("targets", [])
-        df = pd.DataFrame({
-            "Ticker": pd.Series([row.get("ticker", "") for row in prev_targets], dtype="string"),
-            "Proportion": pd.Series([float(row.get("proportion", 0)) for row in prev_targets], dtype="float")
-        }).reset_index(drop=True)
+        df = pd.DataFrame(
+            {
+                "Ticker": pd.Series(
+                    [row.get("ticker", "") for row in prev_targets], dtype="string"
+                ),
+                "Proportion": pd.Series(
+                    [float(row.get("proportion", 0)) for row in prev_targets],
+                    dtype="float",
+                ),
+            }
+        ).reset_index(drop=True)
 
         edited = st.data_editor(
-            df,
-            num_rows="dynamic",
-            hide_index=True,
-            key=f"sell_tgt_table_{key_prefix}"
+            df, num_rows="dynamic", hide_index=True, key=f"sell_tgt_table_{key_prefix}"
         )
 
         targets = []
@@ -220,7 +238,12 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
             tkr, prop = row["Ticker"], row["Proportion"]
             if pd.notna(tkr) and tkr.strip() and pd.notna(prop):
                 try:
-                    targets.append({"ticker": tkr.strip().upper(), "proportion": Decimal(str(float(prop)))})
+                    targets.append(
+                        {
+                            "ticker": tkr.strip().upper(),
+                            "proportion": Decimal(str(float(prop))),
+                        }
+                    )
                 except Exception:
                     pass
         result["targets"] = targets
@@ -252,7 +275,9 @@ with tabs[0]:
         if not st.session_state["show_change_pw"]:
             with st.form("login_form"):
                 user_id = st.text_input("Username", key="login_user_id")
-                password = st.text_input("Password", type="password", key="login_password")
+                password = st.text_input(
+                    "Password", type="password", key="login_password"
+                )
                 submitted = st.form_submit_button("Log In")
 
             if submitted:
@@ -267,7 +292,9 @@ with tabs[0]:
                         )
                     else:
                         stored_hash = item.get("password_hash", "")
-                        if bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
+                        if bcrypt.checkpw(
+                            password.encode("utf-8"), stored_hash.encode("utf-8")
+                        ):
                             st.session_state["user_logged_in"] = True
                             st.session_state["logged_in_user"] = user_id
                             st.success(f"Welcome, {user_id}! 🎉")
@@ -283,9 +310,17 @@ with tabs[0]:
             st.info("🔑 Change Your Password")
             with st.form("change_password_form"):
                 cp_user = st.text_input("Username", key="cp_user_id")
-                cp_current = st.text_input("Current Password", type="password", key="cp_current_password")
-                cp_new = st.text_input("New Password", type="password", key="cp_new_password")
-                cp_confirm = st.text_input("Confirm New Password", type="password", key="cp_confirm_new_password")
+                cp_current = st.text_input(
+                    "Current Password", type="password", key="cp_current_password"
+                )
+                cp_new = st.text_input(
+                    "New Password", type="password", key="cp_new_password"
+                )
+                cp_confirm = st.text_input(
+                    "Confirm New Password",
+                    type="password",
+                    key="cp_confirm_new_password",
+                )
                 submitted_cp = st.form_submit_button("Update Password")
 
             if submitted_cp:
@@ -300,7 +335,9 @@ with tabs[0]:
                         )
                     else:
                         stored_hash_cp = item_cp.get("password_hash", "")
-                        if not bcrypt.checkpw(cp_current.encode("utf-8"), stored_hash_cp.encode("utf-8")):
+                        if not bcrypt.checkpw(
+                            cp_current.encode("utf-8"), stored_hash_cp.encode("utf-8")
+                        ):
                             st.error("Current password is incorrect.")
                         elif cp_new != cp_confirm:
                             st.error("New password entries do not match.")
@@ -328,19 +365,34 @@ with tabs[0]:
 
         # If credentials missing, prompt to fill
         if not (receiver_email and encrypted_key and encrypted_secret):
-            st.warning("⚠️ Please provide your Recipient Email and Alpaca API credentials to continue.")
+            st.warning(
+                "⚠️ Please provide your Recipient Email and Alpaca API credentials to continue."
+            )
 
             with st.form("fill_credentials_form"):
-                email_input = st.text_input("Recipient Email", value=receiver_email or "", key="new_receiver_email")
-                key_input = st.text_input("Alpaca API Key", value="", key="new_alpaca_key")
-                secret_input = st.text_input("Alpaca API Secret", type="password", value="", key="new_alpaca_secret")
+                email_input = st.text_input(
+                    "Recipient Email",
+                    value=receiver_email or "",
+                    key="new_receiver_email",
+                )
+                key_input = st.text_input(
+                    "Alpaca API Key", value="", key="new_alpaca_key"
+                )
+                secret_input = st.text_input(
+                    "Alpaca API Secret",
+                    type="password",
+                    value="",
+                    key="new_alpaca_secret",
+                )
                 save_creds = st.form_submit_button("Save Credentials")
 
             if save_creds:
                 if not (email_input and key_input and secret_input):
                     st.error("All fields are required to save credentials.")
                 else:
-                    if update_user_credentials_partial(user_id, email_input, key_input, secret_input):
+                    if update_user_credentials_partial(
+                        user_id, email_input, key_input, secret_input
+                    ):
                         st.success("Credentials saved successfully!")
                         st.rerun()
 
@@ -365,9 +417,18 @@ with tabs[0]:
         else:
             st.info("✏️ Update Your Credentials")
             with st.form("update_credentials_form"):
-                email_input = st.text_input("Recipient Email", value=receiver_email, key="upd_receiver_email")
-                key_input = st.text_input("Alpaca API Key", value="", key="upd_alpaca_key")
-                secret_input = st.text_input("Alpaca API Secret", type="password", value="", key="upd_alpaca_secret")
+                email_input = st.text_input(
+                    "Recipient Email", value=receiver_email, key="upd_receiver_email"
+                )
+                key_input = st.text_input(
+                    "Alpaca API Key", value="", key="upd_alpaca_key"
+                )
+                secret_input = st.text_input(
+                    "Alpaca API Secret",
+                    type="password",
+                    value="",
+                    key="upd_alpaca_secret",
+                )
                 save_updates = st.form_submit_button("Save Updates")
 
             if save_updates:
@@ -375,7 +436,7 @@ with tabs[0]:
                     user_id,
                     email_input if email_input != receiver_email else "",
                     key_input,
-                    secret_input
+                    secret_input,
                 ):
                     st.success("Credentials updated successfully!")
                     st.session_state["show_update_credentials"] = False
@@ -388,7 +449,9 @@ with tabs[0]:
         # ── TRADING CONFIGURATION SECTION ──────────────────────────────────────
         st.markdown("---")
         st.header("Threshold Based Trading Configuration")
-        st.info("Note that all tables below are editable. Simply double click into any cell to overwrite a given value. These work similar to excel, where you can copy and past multiple selected cells, or even drag the bottom right corner of a cell to copy it down. New rows can be added to each table as well by clicking the empty bottom cell of a given table")
+        st.info(
+            "Note that all tables below are editable. Simply double click into any cell to overwrite a given value. These work similar to excel, where you can copy and past multiple selected cells, or even drag the bottom right corner of a cell to copy it down. New rows can be added to each table as well by clicking the empty bottom cell of a given table"
+        )
         existing_config = item.get("trading_config", {})
 
         # Let user add/remove tickers in one line
@@ -398,7 +461,7 @@ with tabs[0]:
             "Tickers (Enter tickers here comma-separated, e.g. TQQQ, SPY)",
             value=ticker_values,
             help="When you click out of the cell, fillable configs will generate for each ticker you entered",
-            key="tc_tickers_str"
+            key="tc_tickers_str",
         )
 
         tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
@@ -414,13 +477,13 @@ with tabs[0]:
                 key_prefix=f"buy_{ticker}",
                 prev_triggers=prev.get("buy_triggers", []),
                 prev_quantities=prev.get("buy_quantities", []),
-                table_title=f"{ticker} Buy Thresholds/Dollar Amounts"
+                table_title=f"{ticker} Buy Thresholds/Dollar Amounts",
             )
 
             # 2) Buy‐Funding Source
             buy_fund = render_buy_funding_block(
                 key_prefix=f"buyfund_{ticker}",
-                prev_block=prev.get("buy_funding", {"type": "cash"})
+                prev_block=prev.get("buy_funding", {"type": "cash"}),
             )
 
             # 3) Sell Levels & Quantities
@@ -428,13 +491,13 @@ with tabs[0]:
                 key_prefix=f"sell_{ticker}",
                 prev_triggers=prev.get("sell_triggers", []),
                 prev_quantities=prev.get("sell_quantities", []),
-                table_title=f"{ticker} Sell Thresholds/Dollar Amounts"
+                table_title=f"{ticker} Sell Thresholds/Dollar Amounts",
             )
 
             # 4) Sell‐Proceeds Re‐Allocation
             sell_realloc = render_sell_realloc_block(
                 key_prefix=f"sellrealloc_{ticker}",
-                prev_block=prev.get("sell_reallocate", {"enabled": False})
+                prev_block=prev.get("sell_reallocate", {"enabled": False}),
             )
 
             # 5) Consider Long vs Short Term Capital Gains?
@@ -442,7 +505,7 @@ with tabs[0]:
                 "Consider Long vs Short Term Capital Gains",
                 help="If set to true, the bot may decide not to trade even if a threshold is it. For example, say that a buy on TQQQ is triggered and the funds for buying will be obtained by selling VTI. All of the VTI funds are currently short term capital gains but in 1 week they will be long term. The bot will likely determine that VTI should not be sold yet and will not make the trade. An email notification of this event will still be sent",
                 value=prev.get("consider_long_vs_short_term_gains", False),
-                key=f"ltcg_{ticker}"
+                key=f"ltcg_{ticker}",
             )
 
             # 6) Build per‐ticker dictionary
@@ -450,19 +513,16 @@ with tabs[0]:
                 "buy_triggers": buy_trigs,
                 "buy_quantities": buy_qs,
                 "buy_funding": buy_fund,
-
                 "sell_triggers": sell_trigs,
                 "sell_quantities": sell_qs,
                 "sell_reallocate": sell_realloc,
-
                 "consider_long_vs_short_term_gains": consider_ltcg,
-
                 "last_buy_price": prev.get("last_buy_price"),
                 "last_sell_price": prev.get("last_sell_price"),
                 "triggered_buy_levels": prev.get("triggered_buy_levels", []),
                 "triggered_sell_levels": prev.get("triggered_sell_levels", []),
             }
-            
+
             st.markdown("---")
 
         if st.button("Save Trading Configuration"):
@@ -483,7 +543,9 @@ with tabs[1]:
         st.info("Please log in as admin to register new users.")
         with st.form("admin_login_form"):
             admin_user = st.text_input("Admin Username", key="admin_user_input")
-            admin_pwd = st.text_input("Admin Password", type="password", key="admin_password_input")
+            admin_pwd = st.text_input(
+                "Admin Password", type="password", key="admin_password_input"
+            )
             login_admin = st.form_submit_button("Log in as Admin")
 
         if login_admin:
@@ -500,7 +562,9 @@ with tabs[1]:
     st.markdown("**Create a new user account.**")
 
     with st.form("registration_form"):
-        new_user_id = st.text_input("Set Username", help="Unique identifier for this account")
+        new_user_id = st.text_input(
+            "Set Username", help="Unique identifier for this account"
+        )
         raw_trading_password = st.text_input("Set Your Password", type="password")
         submit = st.form_submit_button("Register")
 
@@ -510,9 +574,13 @@ with tabs[1]:
         else:
             existing = get_user_item(new_user_id)
             if existing:
-                st.error(f"User '{new_user_id}' already exists. Please choose a different username.")
+                st.error(
+                    f"User '{new_user_id}' already exists. Please choose a different username."
+                )
             else:
-                password_hash = bcrypt.hashpw(raw_trading_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+                password_hash = bcrypt.hashpw(
+                    raw_trading_password.encode("utf-8"), bcrypt.gensalt()
+                ).decode("utf-8")
                 item = {
                     "user_id": new_user_id,
                     "password_hash": password_hash,
