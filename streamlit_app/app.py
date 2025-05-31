@@ -308,7 +308,7 @@ with tabs[0]:
                 buy_df = pd.DataFrame(buy_data)
 
                 st.write("Buy Levels and Quantities")
-                edited_buy = st.experimental_data_editor(
+                edited_buy = st.data_editor(
                     buy_df,
                     num_rows="dynamic",
                     key=f"buy_table_{ticker}"
@@ -322,7 +322,7 @@ with tabs[0]:
                 sell_df = pd.DataFrame(sell_data)
 
                 st.write("Sell Levels and Quantities")
-                edited_sell = st.experimental_data_editor(
+                edited_sell = st.data_editor(
                     sell_df,
                     num_rows="dynamic",
                     key=f"sell_table_{ticker}"
