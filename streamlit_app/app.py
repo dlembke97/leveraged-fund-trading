@@ -333,7 +333,7 @@ with tabs[0]:
                 st.write("**Buy‐Funding Source**")
                 bt = st.radio(
                     f"{ticker} → When a BUY triggers, use:",
-                    options=["Cash Balance", "Sell Other Asset(s)"],
+                    options=["Cash Balance", "Sell Other Ticker(s)"],
                     index=0 if funding_type == "cash" else 1,
                     key=f"buy_fund_type_{ticker}"
                 )
@@ -343,11 +343,12 @@ with tabs[0]:
                     buy_funding_block["type"] = "cash"
                 else:
                     buy_funding_block["type"] = "sell"
-                    st.write("Specify asset(s) to sell and proportions (must sum to 1.0):")
+                    st.write("Specify ticker(s) to sell and proportions (must sum to 1.0):")
                     prev_sources = prev.get("buy_funding", {}).get("sources", [])
                     buy_src_df = pd.DataFrame({
-                        "Asset": [row.get("asset", "") for row in prev_sources],
-                        "Proportion": [float(row.get("proportion", 0)) for row in prev_sources]
+                        # explicitly tell pandas this column is a string
+                        "Ticker": pd.Series([row.get("ticker", "") for row in prev_sources], dtype="string"),
+                        "Proportion": pd.Series([float(row.get("proportion", 0)) for row in prev_sources], dtype="float")
                     }).reset_index(drop=True)
 
                     edited_buy_src = st.data_editor(
@@ -359,12 +360,12 @@ with tabs[0]:
 
                     new_buy_sources = []
                     for _, row in edited_buy_src.iterrows():
-                        a = row.get("Asset")
+                        a = row.get("Ticker")
                         p = row.get("Proportion")
                         if pd.notna(a) and a.strip() and pd.notna(p):
                             try:
                                 dec_p = Decimal(str(float(p)))
-                                new_buy_sources.append({"asset": a.strip().upper(), "proportion": dec_p})
+                                new_buy_sources.append({"ticker": a.strip().upper(), "proportion": dec_p})
                             except Exception:
                                 pass
                     buy_funding_block["sources"] = new_buy_sources
@@ -405,7 +406,7 @@ with tabs[0]:
                 st.write("**Sell‐Proceeds Re‐Allocation**")
                 sr = st.radio(
                     f"{ticker} → After a SELL triggers, should proceeds be re‐invested?",
-                    options=["No (keep in cash)", "Yes (allocate to other assets)"],
+                    options=["No (keep in cash)", "Yes (allocate to other tickers)"],
                     index=0 if not sell_realloc_enabled else 1,
                     key=f"sell_realloc_type_{ticker}"
                 )
@@ -415,11 +416,11 @@ with tabs[0]:
                     sell_realloc_block["enabled"] = False
                 else:
                     sell_realloc_block["enabled"] = True
-                    st.write("Specify asset(s) and proportions (must sum to 1.0):")
+                    st.write("Specify ticker(s) and proportions (must sum to 1.0):")
                     prev_targets = prev.get("sell_reallocate", {}).get("targets", [])
                     sell_tgt_df = pd.DataFrame({
-                        "Asset": [row.get("asset", "") for row in prev_targets],
-                        "Proportion": [float(row.get("proportion", 0)) for row in prev_targets]
+                        "Ticker": pd.Series([row.get("ticker", "") for row in prev_targets], dtype="string"),
+                        "Proportion": pd.Series([float(row.get("proportion", 0)) for row in prev_targets], dtype="float")
                     }).reset_index(drop=True)
 
                     edited_sell_tgt = st.data_editor(
@@ -431,12 +432,12 @@ with tabs[0]:
 
                     new_sell_targets = []
                     for _, row in edited_sell_tgt.iterrows():
-                        a = row.get("Asset")
+                        a = row.get("Ticker")
                         p = row.get("Proportion")
                         if pd.notna(a) and a.strip() and pd.notna(p):
                             try:
                                 dec_p = Decimal(str(float(p)))
-                                new_sell_targets.append({"asset": a.strip().upper(), "proportion": dec_p})
+                                new_sell_targets.append({"ticker": a.strip().upper(), "proportion": dec_p})
                             except Exception:
                                 pass
                     sell_realloc_block["targets"] = new_sell_targets
