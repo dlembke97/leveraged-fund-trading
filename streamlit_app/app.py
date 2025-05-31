@@ -59,21 +59,32 @@ def update_user_password(user_id: str, new_password: str) -> bool:
         return False
 
 
-def update_user_credentials(user_id: str, email: str, alpaca_key: str, alpaca_secret: str) -> bool:
+def update_user_credentials_partial(user_id: str, email: str, alpaca_key: str, alpaca_secret: str) -> bool:
     """
-    Update receiver_email, encrypted_alpaca_key, and encrypted_alpaca_secret in DynamoDB.
+    Update only the provided (non-empty) fields among receiver_email, encrypted_alpaca_key,
+    or encrypted_alpaca_secret in DynamoDB.
     """
-    encrypted_key = fernet_encrypt(alpaca_key)
-    encrypted_secret = fernet_encrypt(alpaca_secret)
+    expressions = []
+    values = {}
+    if email:
+        expressions.append("receiver_email = :e")
+        values[":e"] = email
+    if alpaca_key:
+        expressions.append("encrypted_alpaca_key = :k")
+        values[":k"] = fernet_encrypt(alpaca_key)
+    if alpaca_secret:
+        expressions.append("encrypted_alpaca_secret = :s")
+        values[":s"] = fernet_encrypt(alpaca_secret)
+
+    if not expressions:
+        return True  # nothing to update
+
+    update_expr = "SET " + ", ".join(expressions)
     try:
         table.update_item(
             Key={"user_id": user_id},
-            UpdateExpression="SET receiver_email = :e, encrypted_alpaca_key = :k, encrypted_alpaca_secret = :s",
-            ExpressionAttributeValues={
-                ":e": email,
-                ":k": encrypted_key,
-                ":s": encrypted_secret
-            },
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=values,
         )
         return True
     except ClientError as e:
@@ -116,7 +127,7 @@ with tabs[0]:
     if "show_update_credentials" not in st.session_state:
         st.session_state["show_update_credentials"] = False
 
-    # ─── If the user is not logged in, show login or change-password ─────────────
+    # ─── If the user is not logged in, show login or change-password ───────────
     if not st.session_state["user_logged_in"]:
         if not st.session_state["show_change_pw"]:
             with st.form("login_form"):
@@ -182,7 +193,7 @@ with tabs[0]:
                 st.session_state["show_change_pw"] = False
                 st.rerun()
 
-    # ─── If the user is logged in, show post-login account & config UI ─────────────
+    # ─── If the user is logged in, show post-login account & config UI ────────────
     else:
         user_id = st.session_state["logged_in_user"]
         item = get_user_item(user_id)
@@ -195,7 +206,7 @@ with tabs[0]:
         encrypted_secret = item.get("encrypted_alpaca_secret", "")
         receiver_email = item.get("receiver_email", "")
 
-        # ─── If credentials are missing, prompt user to fill them ───────────────────
+        # ─── If credentials are missing, prompt user to fill them ──────────────────
         if not (receiver_email and encrypted_key and encrypted_secret):
             st.warning("⚠️ Please provide your Recipient Email and Alpaca API credentials to continue.")
 
@@ -209,14 +220,14 @@ with tabs[0]:
                 if not (email_input and key_input and secret_input):
                     st.error("All fields are required to save credentials.")
                 else:
-                    saved = update_user_credentials(user_id, email_input, key_input, secret_input)
+                    saved = update_user_credentials_partial(user_id, email_input, key_input, secret_input)
                     if saved:
                         st.success("Credentials saved successfully!")
                         st.rerun()
 
             st.stop()
 
-        # ─── At this point, credentials exist ─────────────────────────────────────────
+        # ─── At this point, credentials exist ───────────────────────────────────────
         try:
             alpaca_api_key = fernet_decrypt(encrypted_key)
             alpaca_api_secret = fernet_decrypt(encrypted_secret)
@@ -242,20 +253,23 @@ with tabs[0]:
                 save_updates = st.form_submit_button("Save Updates")
 
             if save_updates:
-                if not (email_input and key_input and secret_input):
-                    st.error("All fields are required to update credentials.")
-                else:
-                    saved = update_user_credentials(user_id, email_input, key_input, secret_input)
-                    if saved:
-                        st.success("Credentials updated successfully!")
-                        st.session_state["show_update_credentials"] = False
-                        st.rerun()
+                # Perform partial update: only non-empty fields get updated
+                saved = update_user_credentials_partial(
+                    user_id,
+                    email_input if email_input != receiver_email else "",
+                    key_input,
+                    secret_input
+                )
+                if saved:
+                    st.success("Credentials updated successfully!")
+                    st.session_state["show_update_credentials"] = False
+                    st.rerun()
 
             if st.button("Cancel"):
                 st.session_state["show_update_credentials"] = False
                 st.rerun()
 
-        # ─── Trading Configuration Section ──────────────────────────────────────────
+        # ─── Trading Configuration Section ────────────────────────────────────────
         st.markdown("---")
         st.subheader("Trading Configuration")
 
@@ -339,71 +353,36 @@ with tabs[1]:
             st.stop()
 
     st.markdown("---")
-    st.markdown("**Create a new user account with custom trading configuration.**")
-
-    def parse_trigger_list(text):
-        try:
-            return [int(x.strip()) for x in text.split(",") if x.strip()]
-        except ValueError:
-            return []
+    st.markdown("**Create a new user account.**")
 
     with st.form(key="registration_form"):
         new_user_id = st.text_input("Set Username", help="Unique identifier for this account")
-        receiver_email = st.text_input("Email")
         raw_trading_password = st.text_input("Set Your Password", type="password")
-        raw_alpaca_api_key = st.text_input("Alpaca API Key")
-        raw_alpaca_api_secret = st.text_input("Alpaca API Secret", type="password")
-
-        st.markdown("---")
-        st.subheader("Trading Configuration")
-        st.markdown("Enter your desired tickers and triggers.")
-        tickers_str = st.text_input("Tickers (comma-separated)", value="TQQQ")
-        tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
-
-        trading_config = {}
-        for ticker in tickers:
-            st.markdown(f"**{ticker}** configuration")
-            buy_str = st.text_input(f"{ticker} Buy Triggers (comma-separated)", key=f"buy_{ticker}")
-            sell_str = st.text_input(f"{ticker} Sell Triggers (comma-separated)", key=f"sell_{ticker}")
-            trading_config[ticker] = {
-                "buy_triggers": parse_trigger_list(buy_str),
-                "sell_triggers": parse_trigger_list(sell_str),
-                "last_buy_price": None,
-                "last_sell_price": None,
-                "triggered_buy_levels": [],
-                "triggered_sell_levels": [],
-            }
 
         submit = st.form_submit_button("Register")
 
     if submit:
-        if not all([new_user_id, receiver_email, raw_trading_password, raw_alpaca_api_key, raw_alpaca_api_secret]):
-            st.error("All primary fields are required. Please fill in every field.")
+        if not (new_user_id and raw_trading_password):
+            st.error("Both Username and Password are required.")
         else:
             existing = get_user_item(new_user_id)
             if existing:
                 st.error(f"User '{new_user_id}' already exists. Please choose a different username.")
             else:
-                encrypted_key = fernet_encrypt(raw_alpaca_api_key)
-                encrypted_secret = fernet_encrypt(raw_alpaca_api_secret)
                 password_hash = bcrypt.hashpw(raw_trading_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
+                # Initially leave email and Alpaca credentials empty, and trading_config empty
                 item = {
                     "user_id": new_user_id,
                     "password_hash": password_hash,
-                    "encrypted_alpaca_key": encrypted_key,
-                    "encrypted_alpaca_secret": encrypted_secret,
-                    "receiver_email": receiver_email,
-                    "trading_config": trading_config,
+                    "encrypted_alpaca_key": "",
+                    "encrypted_alpaca_secret": "",
+                    "receiver_email": "",
+                    "trading_config": {},
                 }
                 try:
                     table.put_item(Item=item)
                     st.success(f"User '{new_user_id}' registered successfully!")
                     st.balloons()
-                    st.session_state["new_user_id"] = ""
-                    st.session_state["receiver_email"] = ""
-                    st.session_state["raw_trading_password"] = ""
-                    st.session_state["raw_alpaca_api_key"] = ""
-                    st.session_state["raw_alpaca_api_secret"] = ""
                 except ClientError as e:
-                    st.error(f"Registration failed: {e.response['Error']['Message']}") 
+                    st.error(f"Registration failed: {e.response['Error']['Message']}")
