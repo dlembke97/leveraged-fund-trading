@@ -143,10 +143,6 @@ with tabs[0]:
                             st.success("Password updated successfully!")
                             # Reset flags and clear form state
                             st.session_state["show_change_pw"] = False
-                            st.session_state["cp_user_id"] = ""
-                            st.session_state["cp_current_password"] = ""
-                            st.session_state["cp_new_password"] = ""
-                            st.session_state["cp_confirm_new_password"] = ""
 
         # Show a "Back to Login" button
         if st.button("Back to Login"):
