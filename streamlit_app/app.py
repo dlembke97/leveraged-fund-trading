@@ -278,7 +278,7 @@ with tabs[0]:
         existing_config = item.get("trading_config", {})
 
         with st.form("trading_config_form"):
-            # Show existing tickers as comma-separated default
+            # Let user add/remove tickers
             existing_tickers = list(existing_config.keys())
             ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
             tickers_str = st.text_input(
@@ -290,79 +290,174 @@ with tabs[0]:
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
             new_trading_config = {}
-            for ticker in tickers:
-                st.markdown(f"**{ticker}** configuration")
 
-                # Prefill previous values
+            for ticker in tickers:
+                st.markdown(f"### {ticker} configuration")
+
                 prev = existing_config.get(ticker, {})
+
+                # ── 1) Buy Levels & Quantities via data_editor ─────────────────────
                 prev_buy = prev.get("buy_triggers", [])
                 prev_buy_qty = prev.get("buy_quantities", [])
-                prev_sell = prev.get("sell_triggers", [])
-                prev_sell_qty = prev.get("sell_quantities", [])
-
-                # Build DataFrame for buy side
-                buy_data = {
+                buy_df = pd.DataFrame({
                     "Trigger": prev_buy,
-                    "Quantity": [float(q) for q in prev_buy_qty]
-                }
-                buy_df = pd.DataFrame(buy_data)
+                    "Quantity (USD)": [float(q) for q in prev_buy_qty]
+                }).reset_index(drop=True)
 
                 st.write("Buy Levels and Quantities")
                 edited_buy = st.data_editor(
                     buy_df,
-                    hide_index=True, 
                     num_rows="dynamic",
+                    hide_index=True,
                     key=f"buy_table_{ticker}"
                 )
 
-                # Build DataFrame for sell side
-                sell_data = {
+                # Parse edited_buy back into lists
+                buy_triggers = []
+                buy_quantities = []
+                if all(col in edited_buy.columns for col in ["Trigger", "Quantity (USD)"]):
+                    for _, row in edited_buy.iterrows():
+                        t = row["Trigger"]
+                        q = row["Quantity (USD)"]
+                        if pd.notna(t) and pd.notna(q):
+                            try:
+                                buy_triggers.append(int(t))
+                                buy_quantities.append(Decimal(str(float(q))))
+                            except Exception:
+                                pass
+
+                # ── 2) “Where do Buy funds come from?” ───────────────────────────
+                prev_buy_funding = prev.get("buy_funding", {"type": "cash"})
+                funding_type = prev_buy_funding.get("type", "cash")
+
+                st.write("**Buy‐Funding Source**")
+                bt = st.radio(
+                    f"{ticker} → When a BUY triggers, use:",
+                    options=["Cash Balance", "Sell Other Asset(s)"],
+                    index=0 if funding_type == "cash" else 1,
+                    key=f"buy_fund_type_{ticker}"
+                )
+
+                buy_funding_block = {}
+                if bt == "Cash Balance":
+                    buy_funding_block["type"] = "cash"
+                else:
+                    buy_funding_block["type"] = "sell"
+                    st.write("Specify asset(s) to sell and proportions (must sum to 1.0):")
+                    prev_sources = prev.get("buy_funding", {}).get("sources", [])
+                    buy_src_df = pd.DataFrame({
+                        "Asset": [row.get("asset", "") for row in prev_sources],
+                        "Proportion": [float(row.get("proportion", 0)) for row in prev_sources]
+                    }).reset_index(drop=True)
+
+                    edited_buy_src = st.data_editor(
+                        buy_src_df,
+                        num_rows="dynamic",
+                        hide_index=True,
+                        key=f"buy_src_table_{ticker}"
+                    )
+
+                    new_buy_sources = []
+                    for _, row in edited_buy_src.iterrows():
+                        a = row.get("Asset")
+                        p = row.get("Proportion")
+                        if pd.notna(a) and a.strip() and pd.notna(p):
+                            try:
+                                dec_p = Decimal(str(float(p)))
+                                new_buy_sources.append({"asset": a.strip().upper(), "proportion": dec_p})
+                            except Exception:
+                                pass
+                    buy_funding_block["sources"] = new_buy_sources
+
+                # ── 3) Sell Levels & Quantities via data_editor ─────────────────────
+                prev_sell = prev.get("sell_triggers", [])
+                prev_sell_qty = prev.get("sell_quantities", [])
+                sell_df = pd.DataFrame({
                     "Trigger": prev_sell,
-                    "Quantity": [float(q) for q in prev_sell_qty]
-                }
-                sell_df = pd.DataFrame(sell_data)
+                    "Quantity (USD)": [float(q) for q in prev_sell_qty]
+                }).reset_index(drop=True)
 
                 st.write("Sell Levels and Quantities")
                 edited_sell = st.data_editor(
                     sell_df,
-                    hide_index=True, 
                     num_rows="dynamic",
+                    hide_index=True,
                     key=f"sell_table_{ticker}"
                 )
 
-                # Parse back into lists (dropping NaNs)
-                buy_triggers = []
-                buy_quantities = []
-                if "Trigger" in edited_buy.columns and "Quantity" in edited_buy.columns:
-                    for _, row in edited_buy.iterrows():
-                        if pd.notna(row["Trigger"]) and pd.notna(row["Quantity"]):
-                            try:
-                                buy_triggers.append(int(row["Trigger"]))
-                                buy_quantities.append(Decimal(str(float(row["Quantity"]))))
-                            except Exception:
-                                pass
-
                 sell_triggers = []
                 sell_quantities = []
-                if "Trigger" in edited_sell.columns and "Quantity" in edited_sell.columns:
+                if all(col in edited_sell.columns for col in ["Trigger", "Quantity (USD)"]):
                     for _, row in edited_sell.iterrows():
-                        if pd.notna(row["Trigger"]) and pd.notna(row["Quantity"]):
+                        t = row["Trigger"]
+                        q = row["Quantity (USD)"]
+                        if pd.notna(t) and pd.notna(q):
                             try:
-                                sell_triggers.append(int(row["Trigger"]))
-                                sell_quantities.append(Decimal(str(float(row["Quantity"]))))
+                                sell_triggers.append(int(t))
+                                sell_quantities.append(Decimal(str(float(q))))
                             except Exception:
                                 pass
 
+                # ── 4) “Re‐allocate Sell Proceeds?” ────────────────────────────────
+                prev_sell_realloc = prev.get("sell_reallocate", {"enabled": False})
+                sell_realloc_enabled = prev_sell_realloc.get("enabled", False)
+
+                st.write("**Sell‐Proceeds Re‐Allocation**")
+                sr = st.radio(
+                    f"{ticker} → After a SELL triggers, should proceeds be re‐invested?",
+                    options=["No (keep in cash)", "Yes (allocate to other assets)"],
+                    index=0 if not sell_realloc_enabled else 1,
+                    key=f"sell_realloc_type_{ticker}"
+                )
+
+                sell_realloc_block = {"enabled": False}
+                if sr == "No (keep in cash)":
+                    sell_realloc_block["enabled"] = False
+                else:
+                    sell_realloc_block["enabled"] = True
+                    st.write("Specify asset(s) and proportions (must sum to 1.0):")
+                    prev_targets = prev.get("sell_reallocate", {}).get("targets", [])
+                    sell_tgt_df = pd.DataFrame({
+                        "Asset": [row.get("asset", "") for row in prev_targets],
+                        "Proportion": [float(row.get("proportion", 0)) for row in prev_targets]
+                    }).reset_index(drop=True)
+
+                    edited_sell_tgt = st.data_editor(
+                        sell_tgt_df,
+                        num_rows="dynamic",
+                        hide_index=True,
+                        key=f"sell_tgt_table_{ticker}"
+                    )
+
+                    new_sell_targets = []
+                    for _, row in edited_sell_tgt.iterrows():
+                        a = row.get("Asset")
+                        p = row.get("Proportion")
+                        if pd.notna(a) and a.strip() and pd.notna(p):
+                            try:
+                                dec_p = Decimal(str(float(p)))
+                                new_sell_targets.append({"asset": a.strip().upper(), "proportion": dec_p})
+                            except Exception:
+                                pass
+                    sell_realloc_block["targets"] = new_sell_targets
+
+                # ── 5) Build per‐ticker config dict ─────────────────────────────────
                 new_trading_config[ticker] = {
                     "buy_triggers": buy_triggers,
                     "buy_quantities": buy_quantities,
+                    "buy_funding": buy_funding_block,
+
                     "sell_triggers": sell_triggers,
                     "sell_quantities": sell_quantities,
+                    "sell_reallocate": sell_realloc_block,
+
                     "last_buy_price": prev.get("last_buy_price"),
                     "last_sell_price": prev.get("last_sell_price"),
                     "triggered_buy_levels": prev.get("triggered_buy_levels", []),
                     "triggered_sell_levels": prev.get("triggered_sell_levels", []),
                 }
+
+                st.markdown("---")
 
             save_config = st.form_submit_button("Save Trading Configuration")
 
