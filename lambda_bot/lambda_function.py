@@ -5,6 +5,8 @@ import datetime
 from zoneinfo import ZoneInfo
 
 import boto3
+from cryptography.fernet import Fernet
+from botocore.exceptions import ClientError
 from alpaca_trade_api.rest import REST, TimeFrame, APIError
 import pandas_market_calendars as mcal
 from lambda_bot.common_scripts import EmailManager, setup_logger
@@ -14,9 +16,41 @@ logger = setup_logger("lambda_bot")
 dynamodb = boto3.resource("dynamodb")
 USERS_TABLE = os.getenv("USERS_TABLE", "Users")
 table = dynamodb.Table(USERS_TABLE)
+FERNET_KEY = os.environ["FERNET_KEY"].encode("utf-8")
+fernet = Fernet(FERNET_KEY)
 
 # NYSE calendar for market hours/holidays:
 NYSE = mcal.get_calendar("NYSE")
+
+# ─── Helper: Fetch & Decrypt Alpaca Credentials ─────────────────────────────────
+def get_decrypted_alpaca_creds(user_id: str):
+    """
+    Given a user_id, fetch that item from DynamoDB, then decrypt
+    the stored 'encrypted_alpaca_key' and 'encrypted_alpaca_secret' via Fernet.
+    Returns (alpaca_api_key, alpaca_api_secret) as plain strings.
+    """
+    try:
+        resp = table.get_item(Key={"user_id": user_id})
+    except ClientError as e:
+        raise RuntimeError(f"DynamoDB get_item error: {e.response['Error']['Message']}")
+
+    item = resp.get("Item")
+    if not item:
+        raise RuntimeError(f"No user record for user_id = '{user_id}'")
+
+    enc_key = item.get("encrypted_alpaca_key")
+    enc_secret = item.get("encrypted_alpaca_secret")
+    if not enc_key or not enc_secret:
+        raise RuntimeError("Missing encrypted Alpaca credentials in DynamoDB item.")
+
+    try:
+        # Decrypt the Base64‐encoded token strings
+        alpaca_api_key = fernet.decrypt(enc_key.encode("utf-8")).decode("utf-8")
+        alpaca_api_secret = fernet.decrypt(enc_secret.encode("utf-8")).decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Fernet decryption failed: {str(e)}")
+
+    return alpaca_api_key, alpaca_api_secret
 
 def is_market_open():
     now = datetime.datetime.now(ZoneInfo("America/New_York"))
@@ -120,11 +154,13 @@ def lambda_handler(event, context):
     for u in users:
         user_id = u.get("user_id")
         logger.info(f"Processing user {user_id}")
+        alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
         api = REST(
-            u.get("alpaca_api_key"),
-            u.get("alpaca_api_secret"),
+            alpaca_api_key,
+            alpaca_api_secret,
             base_url="https://paper-api.alpaca.markets"
         )
+        logger.info(alpaca_api_key)
         email_mgr = EmailManager(
             sender_email=u.get("sender_email"),
             receiver_email=u.get("receiver_email"),
