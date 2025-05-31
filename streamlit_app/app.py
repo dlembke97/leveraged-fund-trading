@@ -59,7 +59,7 @@ def update_user_password(user_id: str, new_password: str) -> bool:
         return False
 
 
-def update_user_credentials(user_id: str, email: str, alpaca_key: str, alpaca_secret: str):
+def update_user_credentials(user_id: str, email: str, alpaca_key: str, alpaca_secret: str) -> bool:
     """
     Update receiver_email, encrypted_alpaca_key, and encrypted_alpaca_secret in DynamoDB.
     """
@@ -81,7 +81,7 @@ def update_user_credentials(user_id: str, email: str, alpaca_key: str, alpaca_se
         return False
 
 
-def update_trading_config(user_id: str, config: dict):
+def update_trading_config(user_id: str, config: dict) -> bool:
     """
     Overwrite the trading_config attribute for the given user_id.
     """
@@ -113,8 +113,10 @@ with tabs[0]:
         st.session_state["show_change_pw"] = False
     if "logged_in_user" not in st.session_state:
         st.session_state["logged_in_user"] = ""
+    if "show_update_credentials" not in st.session_state:
+        st.session_state["show_update_credentials"] = False
 
-    # ---------- If the user is not logged in, show login or change-password ----------
+    # ─── If the user is not logged in, show login or change-password ─────────────
     if not st.session_state["user_logged_in"]:
         if not st.session_state["show_change_pw"]:
             with st.form("login_form"):
@@ -134,7 +136,6 @@ with tabs[0]:
                     else:
                         stored_hash = item.get("password_hash", "")
                         if bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8")):
-                            # Decrypt credentials if they exist (we'll check later)
                             st.session_state["user_logged_in"] = True
                             st.session_state["logged_in_user"] = user_id
                             st.success(f"Welcome, {user_id}! 🎉")
@@ -142,7 +143,6 @@ with tabs[0]:
                         else:
                             st.error(f"Password for '{user_id}' incorrect.")
 
-            # Button to switch to change-password mode
             if st.button("Change Password"):
                 st.session_state["show_change_pw"] = True
                 st.rerun()
@@ -178,12 +178,11 @@ with tabs[0]:
                                 st.session_state["show_change_pw"] = False
                                 st.rerun()
 
-            # Button to go back to login
             if st.button("Back to Login"):
                 st.session_state["show_change_pw"] = False
                 st.rerun()
 
-    # ---------- If the user is logged in, show post-login account & config UI ----------
+    # ─── If the user is logged in, show post-login account & config UI ─────────────
     else:
         user_id = st.session_state["logged_in_user"]
         item = get_user_item(user_id)
@@ -196,7 +195,7 @@ with tabs[0]:
         encrypted_secret = item.get("encrypted_alpaca_secret", "")
         receiver_email = item.get("receiver_email", "")
 
-        # If any of the fields are missing, prompt user to fill them
+        # ─── If credentials are missing, prompt user to fill them ───────────────────
         if not (receiver_email and encrypted_key and encrypted_secret):
             st.warning("⚠️ Please provide your Recipient Email and Alpaca API credentials to continue.")
 
@@ -217,7 +216,7 @@ with tabs[0]:
 
             st.stop()
 
-        # At this point, we know email and Alpaca keys exist; decrypt them if needed
+        # ─── At this point, credentials exist ─────────────────────────────────────────
         try:
             alpaca_api_key = fernet_decrypt(encrypted_key)
             alpaca_api_secret = fernet_decrypt(encrypted_secret)
@@ -227,18 +226,42 @@ with tabs[0]:
 
         st.success(f"Logged in as **{user_id}**")
         st.write(f"Recipient email: **{receiver_email}**")
-        # We do not display Alpaca keys in UI for security, but they are available in memory
 
-        # ─── Trading Configuration Section ────────────────────────────────────
+        # Button to allow updating credentials
+        if not st.session_state["show_update_credentials"]:
+            if st.button("Update Email or Alpaca Keys"):
+                st.session_state["show_update_credentials"] = True
+                st.rerun()
+        else:
+            st.info("✏️ Update Your Credentials")
+            with st.form("update_credentials_form"):
+                # Email prefilled, keys empty
+                email_input = st.text_input("Recipient Email", value=receiver_email, key="upd_receiver_email")
+                key_input = st.text_input("Alpaca API Key", value="", key="upd_alpaca_key")
+                secret_input = st.text_input("Alpaca API Secret", type="password", value="", key="upd_alpaca_secret")
+                save_updates = st.form_submit_button("Save Updates")
+
+            if save_updates:
+                if not (email_input and key_input and secret_input):
+                    st.error("All fields are required to update credentials.")
+                else:
+                    saved = update_user_credentials(user_id, email_input, key_input, secret_input)
+                    if saved:
+                        st.success("Credentials updated successfully!")
+                        st.session_state["show_update_credentials"] = False
+                        st.rerun()
+
+            if st.button("Cancel"):
+                st.session_state["show_update_credentials"] = False
+                st.rerun()
+
+        # ─── Trading Configuration Section ──────────────────────────────────────────
         st.markdown("---")
         st.subheader("Trading Configuration")
 
-        # Fetch existing trading_config (or default to empty dict)
         existing_config = item.get("trading_config", {})
 
-        # Build a form to edit trading configuration
         with st.form("trading_config_form"):
-            # Users enter tickers as comma-separated. If existing_config has keys, prefill.
             existing_tickers = list(existing_config.keys())
             ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
             tickers_str = st.text_input(
@@ -249,7 +272,6 @@ with tabs[0]:
             )
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
-            # For each ticker, show buy/sell trigger fields, prefilled if exist
             new_trading_config = {}
             for ticker in tickers:
                 st.markdown(f"**{ticker}** configuration")
@@ -276,7 +298,6 @@ with tabs[0]:
                 new_trading_config[ticker] = {
                     "buy_triggers": parse_trigger_list(buy_str),
                     "sell_triggers": parse_trigger_list(sell_str),
-                    # Preserve last known prices/triggered levels if they exist
                     "last_buy_price": prev.get("last_buy_price"),
                     "last_sell_price": prev.get("last_sell_price"),
                     "triggered_buy_levels": prev.get("triggered_buy_levels", []),
@@ -286,7 +307,6 @@ with tabs[0]:
             save_config = st.form_submit_button("Save Trading Configuration")
 
         if save_config:
-            # Validate at least one ticker
             if not tickers:
                 st.error("Please specify at least one ticker.")
             else:
@@ -364,7 +384,6 @@ with tabs[1]:
             if existing:
                 st.error(f"User '{new_user_id}' already exists. Please choose a different username.")
             else:
-                # Encrypt credentials and hash password
                 encrypted_key = fernet_encrypt(raw_alpaca_api_key)
                 encrypted_secret = fernet_encrypt(raw_alpaca_api_secret)
                 password_hash = bcrypt.hashpw(raw_trading_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -381,7 +400,6 @@ with tabs[1]:
                     table.put_item(Item=item)
                     st.success(f"User '{new_user_id}' registered successfully!")
                     st.balloons()
-                    # Clear form state
                     st.session_state["new_user_id"] = ""
                     st.session_state["receiver_email"] = ""
                     st.session_state["raw_trading_password"] = ""
