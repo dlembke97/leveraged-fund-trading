@@ -144,7 +144,8 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
         f"{key_prefix} → When a BUY triggers, use:",
         options=["Cash Balance", "Sell Other Ticker(s)"],
         index=0 if prev_type == "cash" else 1,
-        key=f"buy_fund_type_{key_prefix}"
+        key=f"buy_fund_type_{key_prefix}",
+        on_change=st.rerun
     )
 
     result = {}
@@ -193,7 +194,8 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
         f"{key_prefix} → After a SELL triggers, should proceeds be re‐invested?",
         options=["No (keep in cash)", "Yes (allocate to other tickers)"],
         index=0 if not enabled else 1,
-        key=f"sell_realloc_type_{key_prefix}"
+        key=f"sell_realloc_type_{key_prefix}",
+        on_change=st.rerun
     )
 
     result = {"enabled": False}
@@ -402,7 +404,7 @@ with tabs[0]:
         )
         if st.button(f"Update Ticker List"):
             st.rerun()
-            
+
         with st.form("trading_config_form"):
 
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
