@@ -288,14 +288,14 @@ with tabs[0]:
                 key="tc_tickers_str"
             )
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
-    
+
             new_trading_config = {}
-    
+
             for ticker in tickers:
                 st.markdown(f"### {ticker} configuration")
-    
+
                 prev = existing_config.get(ticker, {})  # could be empty dict if new
-    
+
                 # ── A) Buy Triggers & Quantities ─────────────────────────────────────
                 prev_buy = prev.get("buy_triggers", [])
                 prev_buy_qty = prev.get("buy_quantities", [])
@@ -309,27 +309,27 @@ with tabs[0]:
                     value=", ".join(str(x) for x in prev_buy_qty),
                     key=f"tc_buy_qty_{ticker}"
                 )
-    
+
                 def parse_int_list(text):
                     try:
                         return [int(x.strip()) for x in text.split(",") if x.strip()]
                     except ValueError:
                         return []
-    
+
                 def parse_decimal_list(text):
                     try:
                         # Each quantity is a dollar amount, e.g. "500.0"
                         return [Decimal(x.strip()) for x in text.split(",") if x.strip()]
                     except Exception:
                         return []
-    
+
                 buy_triggers = parse_int_list(buy_str)
                 buy_quantities = parse_decimal_list(buy_qty_str)
-    
+
                 # ── B) “Where do Buy funds come from?” ─────────────────────────────────
                 prev_buy_funding = prev.get("buy_funding", {"type": "cash"})
                 funding_type = prev_buy_funding.get("type", "cash")  # default = "cash"
-    
+
                 st.write("**Buy‐Funding Source**")
                 bt = st.radio(
                     f"{ticker} → When a BUY triggers, use:",
@@ -337,7 +337,7 @@ with tabs[0]:
                     index=0 if funding_type == "cash" else 1,
                     key=f"buy_fund_type_{ticker}"
                 )
-    
+
                 buy_funding_block = {}
                 if bt == "Cash Balance":
                     buy_funding_block["type"] = "cash"
@@ -351,8 +351,8 @@ with tabs[0]:
                         "Asset": [row.get("asset", "") for row in prev_sources],
                         "Proportion": [float(row.get("proportion", 0)) for row in prev_sources]
                     }).reset_index(drop=True)
-    
-                    edited_buy_src = st.experimental_data_editor(
+
+                    edited_buy_src = st.data_editor(
                         buy_src_df,
                         num_rows="dynamic",
                         hide_index=True,
@@ -370,7 +370,7 @@ with tabs[0]:
                             except Exception:
                                 pass
                     buy_funding_block["sources"] = new_buy_sources
-    
+
                 # ── C) Sell Triggers & Quantities ──────────────────────────────────────
                 prev_sell = prev.get("sell_triggers", [])
                 prev_sell_qty = prev.get("sell_quantities", [])
@@ -384,14 +384,14 @@ with tabs[0]:
                     value=", ".join(str(x) for x in prev_sell_qty),
                     key=f"tc_sell_qty_{ticker}"
                 )
-    
+
                 sell_triggers = parse_int_list(sell_str)
                 sell_quantities = parse_decimal_list(sell_qty_str)
-    
+
                 # ── D) “Re‐allocate Sell proceeds?” ─────────────────────────────────────
                 prev_sell_realloc = prev.get("sell_reallocate", {"enabled": False})
                 sell_realloc_enabled = prev_sell_realloc.get("enabled", False)
-    
+
                 st.write("**Sell‐Proceeds Re‐Allocation**")
                 sr = st.radio(
                     f"{ticker} → After a SELL triggers, should proceeds be re‐invested?",
@@ -399,7 +399,7 @@ with tabs[0]:
                     index=0 if not sell_realloc_enabled else 1,
                     key=f"sell_realloc_type_{ticker}"
                 )
-    
+
                 sell_realloc_block = {"enabled": False}
                 if sr == "No (keep in cash)":
                     sell_realloc_block["enabled"] = False
@@ -411,8 +411,8 @@ with tabs[0]:
                         "Asset": [row.get("asset", "") for row in prev_targets],
                         "Proportion": [float(row.get("proportion", 0)) for row in prev_targets]
                     }).reset_index(drop=True)
-    
-                    edited_sell_tgt = st.experimental_data_editor(
+
+                    edited_sell_tgt = st.data_editor(
                         sell_tgt_df,
                         num_rows="dynamic",
                         hide_index=True,
@@ -429,28 +429,28 @@ with tabs[0]:
                             except Exception:
                                 pass
                     sell_realloc_block["targets"] = new_sell_targets
-    
+
                 # ── E) Build the per‐ticker config dictionary ───────────────────────────
                 new_trading_config[ticker] = {
                     "buy_triggers": buy_triggers,
                     "buy_quantities": buy_quantities,
                     "buy_funding": buy_funding_block,                # NEW BLOCK
-    
+
                     "sell_triggers": sell_triggers,
                     "sell_quantities": sell_quantities,
                     "sell_reallocate": sell_realloc_block,           # NEW BLOCK
-    
+
                     # preserve last‐execution state if present:
                     "last_buy_price": prev.get("last_buy_price"),
                     "last_sell_price": prev.get("last_sell_price"),
                     "triggered_buy_levels": prev.get("triggered_buy_levels", []),
                     "triggered_sell_levels": prev.get("triggered_sell_levels", []),
                 }
-    
+
                 st.markdown("---")   # separator before next ticker
-    
+
             save_config = st.form_submit_button("Save Trading Configuration")
-    
+
         if save_config:
             if not tickers:
                 st.error("Please specify at least one ticker.")
