@@ -113,49 +113,50 @@ if submitted:
                 "messagingSenderId": FIREBASE_SENDER_ID,
                 "appId": FIREBASE_APP_ID
             }
+            js_test = "console.log('🔔 Starting push registration flow');"
+            st_javascript(js_test)
+            # # Debugging-enhanced JS for push registration
+            # js = f"""
+            # (async () => {{
+            #   console.log('🔔 Starting push registration flow');
+            #   try {{
+            #     // Load Firebase modules dynamically
+            #     const fbAppModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
+            #     const fbMsgModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
+            #     const initializeApp = fbAppModule.initializeApp;
+            #     const getMessaging = fbMsgModule.getMessaging;
+            #     const getToken = fbMsgModule.getToken;
 
-            # Debugging-enhanced JS for push registration
-            js = f"""
-            (async () => {{
-              console.log('🔔 Starting push registration flow');
-              try {{
-                // Load Firebase modules dynamically
-                const fbAppModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js');
-                const fbMsgModule = await import('https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js');
-                const initializeApp = fbAppModule.initializeApp;
-                const getMessaging = fbMsgModule.getMessaging;
-                const getToken = fbMsgModule.getToken;
+            #     // Initialize Firebase
+            #     const app = initializeApp({json.dumps(firebase_config)});
+            #     console.log('✅ Firebase initialized');
+            #     const messaging = getMessaging(app);
+            #     console.log('✅ Firebase Messaging loaded');
 
-                // Initialize Firebase
-                const app = initializeApp({json.dumps(firebase_config)});
-                console.log('✅ Firebase initialized');
-                const messaging = getMessaging(app);
-                console.log('✅ Firebase Messaging loaded');
+            #     // Register Service Worker
+            #     const sw = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
+            #     console.log('✅ Service worker registered:', sw);
 
-                // Register Service Worker
-                const sw = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
-                console.log('✅ Service worker registered:', sw);
+            #     // Request permission
+            #     const permission = await Notification.requestPermission();
+            #     console.log('🔔 Notification permission:', permission);
+            #     if (permission === 'granted') {{
+            #       // Get token
+            #       const token = await getToken(messaging, {{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
+            #       console.log('🔑 FCM token:', token);
 
-                // Request permission
-                const permission = await Notification.requestPermission();
-                console.log('🔔 Notification permission:', permission);
-                if (permission === 'granted') {{
-                  // Get token
-                  const token = await getToken(messaging, {{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
-                  console.log('🔑 FCM token:', token);
-
-                  // POST to registration endpoint
-                  const response = await fetch('{REGISTER_ENDPOINT}', {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ user_id: '{user_id}', device_token: token }})
-                  }});
-                  const text = await response.text();
-                  console.log('📨 Registration response:', response.status, text);
-                }}
-              }} catch (err) {{
-                console.error('❌ Push registration error:', err);
-              }}
-            }})();
-            """
-            st_javascript(js)
+            #       // POST to registration endpoint
+            #       const response = await fetch('{REGISTER_ENDPOINT}', {{
+            #         method: 'POST',
+            #         headers: {{ 'Content-Type': 'application/json' }},
+            #         body: JSON.stringify({{ user_id: '{user_id}', device_token: token }})
+            #       }});
+            #       const text = await response.text();
+            #       console.log('📨 Registration response:', response.status, text);
+            #     }}
+            #   }} catch (err) {{
+            #     console.error('❌ Push registration error:', err);
+            #   }}
+            # }})();
+            # """
+            # st_javascript(js)
