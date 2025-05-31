@@ -2,6 +2,11 @@ name: Build & Deploy Trading Lambdas
 
 on:
   push:
+    paths:
+      # 1. Trigger when this workflow file is modified:
+      - '.github/workflows/deploy-lambda.yml'
+      # 2. Trigger when anything in lambda_bot/ changes:
+      - 'lambda_bot/**'
 
 jobs:
   deploy:

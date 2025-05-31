@@ -145,7 +145,6 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
         options=["Cash Balance", "Sell Other Ticker(s)"],
         index=0 if prev_type == "cash" else 1,
         key=f"buy_fund_type_{key_prefix}",
-        # on_change=st.rerun
     )
 
     result = {}
@@ -195,7 +194,6 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
         options=["No (keep in cash)", "Yes (allocate to other tickers)"],
         index=0 if not enabled else 1,
         key=f"sell_realloc_type_{key_prefix}",
-        on_change=st.rerun
     )
 
     result = {"enabled": False}
@@ -402,8 +400,6 @@ with tabs[0]:
             help="Enter tickers you wish to configure, e.g. TQQQ, SPY",
             key="tc_tickers_str"
         )
-        # if st.button(f"Update Ticker List"):
-        #     st.rerun()
 
         tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
