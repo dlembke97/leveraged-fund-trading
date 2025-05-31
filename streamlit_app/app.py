@@ -145,7 +145,7 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
         options=["Cash Balance", "Sell Other Ticker(s)"],
         index=0 if prev_type == "cash" else 1,
         key=f"buy_fund_type_{key_prefix}",
-        on_change=st.rerun
+        # on_change=st.rerun
     )
 
     result = {}
