@@ -391,18 +391,20 @@ with tabs[0]:
 
         existing_config = item.get("trading_config", {})
 
+        # Let user add/remove tickers in one line
+        existing_tickers = list(existing_config.keys())
+        ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
+        tickers_str = st.text_input(
+            "Tickers (comma-separated)",
+            value=ticker_values,
+            help="Enter tickers you wish to configure, e.g. TQQQ, SPY",
+            key="tc_tickers_str"
+        )
+        if st.button(f"Update Ticker List"):
+            st.rerun()
+            
         with st.form("trading_config_form"):
-            # Let user add/remove tickers in one line
-            existing_tickers = list(existing_config.keys())
-            ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
-            tickers_str = st.text_input(
-                "Tickers (comma-separated)",
-                value=ticker_values,
-                help="Enter tickers you wish to configure, e.g. TQQQ, SPY",
-                key="tc_tickers_str"
-            )
-            if st.button(f"Update Ticker List"):
-                st.rerun()
+
             tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
 
             new_trading_config = {}
