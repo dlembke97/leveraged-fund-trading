@@ -46,10 +46,10 @@ if not st.session_state.logged_in:
     if not st.session_state.logged_in:
         st.stop()
 
-# ---------- Helpers ---------- ---------- ----------
+# ---------- Helpers ----------
 def parse_trigger_list(text):
     try:
-        return [int(x.strip()) for x in text.split(',') if x.strip()]
+        return [int(x.strip()) for x in text.split(",") if x.strip()]
     except ValueError:
         return []
 
@@ -67,88 +67,90 @@ with st.form("registration_form"):
     sender_email_password = st.text_input("Sender Email Password", type="password")
     st.markdown("---")
     st.subheader("Trading Configuration")
-    tickers_str = st.text_input("Tickers (comma-separated)", value="FNGA,TQQQ")
-    tickers     = [t.strip().upper() for t in tickers_str.split(',') if t.strip()]
+    tickers_str = st.text_input("Tickers (comma-separated)", value="TQQQ")
+    tickers     = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
     trading_config = {}
     for ticker in tickers:
         st.markdown(f"**{ticker}** configuration")
         buy_str  = st.text_input(f"{ticker} Buy Triggers (comma-separated)", key=f"buy_{ticker}")
         sell_str = st.text_input(f"{ticker} Sell Triggers (comma-separated)", key=f"sell_{ticker}")
         trading_config[ticker] = {
-            "buy_triggers": parse_trigger_list(buy_str),
-            "sell_triggers": parse_trigger_list(sell_str),
-            "last_buy_price": None,
-            "last_sell_price": None,
+            "buy_triggers":         parse_trigger_list(buy_str),
+            "sell_triggers":        parse_trigger_list(sell_str),
+            "last_buy_price":       None,
+            "last_sell_price":      None,
             "triggered_buy_levels": [],
-            "triggered_sell_levels": []
+            "triggered_sell_levels":[] 
         }
     submitted = st.form_submit_button("Register")
 
 if submitted:
+    # Validate required fields
     if not all([user_id, alpaca_api_key, alpaca_api_secret, sender_email, receiver_email, sender_email_password]):
         st.error("All primary fields are required. Please fill in every field.")
     else:
         item = {
-            'user_id':               user_id,
-            'alpaca_api_key':        alpaca_api_key,
-            'alpaca_api_secret':     alpaca_api_secret,
-            'sender_email':          sender_email,
-            'receiver_email':        receiver_email,
-            'sender_email_password': sender_email_password,
-            'trading_config':        trading_config
+            "user_id":               user_id,
+            "alpaca_api_key":        alpaca_api_key,
+            "alpaca_api_secret":     alpaca_api_secret,
+            "sender_email":          sender_email,
+            "receiver_email":        receiver_email,
+            "sender_email_password": sender_email_password,
+            "trading_config":        trading_config
         }
-        # try:
-        table.put_item(Item=item)
-        st.success(f"User '{user_id}' registered successfully!")
-        st.balloons()
-        # except ClientError as e:
-        #     st.error(f"Registration failed: {e.response['Error']['Message']}")
-        #     st.stop()
+        try:
+            table.put_item(Item=item)
+            st.success(f"User '{user_id}' registered successfully!")
+            st.balloons()
+        except ClientError as e:
+            st.error(f"Registration failed: {e.response['Error']['Message']}")
+            st.stop()
 
         if enable_notifs:
-            # 1) Invisible iframe to load Firebase SDK into this origin
-            components.html(
-                '<iframe src="/static/inject-firebase.html" style="display:none;"></iframe>',
-                height=0,
-                width=0
-            )
-
-            # 2) Now immediately run your registration logic in a <script> tag
-            firebase_config = {
+            # Build the Firebase config object for JS
+            firebase_config_json = json.dumps({
                 "apiKey": FIREBASE_API_KEY,
                 "authDomain": FIREBASE_AUTH_DOMAIN,
                 "projectId": FIREBASE_PROJECT_ID,
                 "messagingSenderId": FIREBASE_SENDER_ID,
                 "appId": FIREBASE_APP_ID
-            }
+            })
 
-            js = f"""
+            # === Inject ONE HTML block that loads Firebase SDK and runs registration logic ===
+            html_code = f"""
+            <!-- 1) Load Firebase SDKs via <script> tags (app + messaging) -->
+            <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js"></script>
+            <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js"></script>
+
             <script>
+            // Wrap everything in an async IIFE so we can await each step
             (async () => {{
               console.log('🔔 Starting push registration flow');
 
-              // 3) Initialize Firebase (SDK is already loaded by the hidden iframe)
+              // 2) Ensure firebase is available
               if (typeof firebase === 'undefined' || !firebase.initializeApp) {{
                 console.error('❌ Firebase SDK not found on window');
                 return;
               }}
-              firebase.initializeApp({json.dumps(firebase_config)});
+
+              // 3) Initialize Firebase
+              firebase.initializeApp({firebase_config_json});
               console.log('✅ Firebase initialized');
 
               // 4) Initialize Messaging
               const messaging = firebase.messaging();
               console.log('✅ Firebase Messaging loaded');
 
-              // 5) Register the Service Worker
+              // 5) Register Service Worker (must be served from /static)
               try {{
-                const sw = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
-                console.log('✅ Service worker registered:', sw);
+                const swReg = await navigator.serviceWorker.register('/static/firebase-messaging-sw.js');
+                console.log('✅ Service worker registered:', swReg);
               }} catch (swErr) {{
                 console.error('❌ Service worker failed to register:', swErr);
                 return;
               }}
 
-              // 6) Request Notification Permission
+              // 6) Ask for Notification permission
               const permission = await Notification.requestPermission();
               console.log('🔔 Notification permission:', permission);
               if (permission !== 'granted') {{
@@ -156,7 +158,7 @@ if submitted:
                 return;
               }}
 
-              // 7) Get FCM Token
+              // 7) Get FCM token (for Web Push)
               let token;
               try {{
                 token = await messaging.getToken({{ vapidKey: '{PUBLIC_VAPID_KEY}' }});
@@ -166,8 +168,8 @@ if submitted:
                 return;
               }}
 
-              // 8) POST to your registration endpoint
-              console.log('📡 About to POST to:', '{REGISTER_ENDPOINT}');
+              // 8) POST {{"user_id": "{user_id}", "device_token": token}} to register_device endpoint
+              console.log('📡 About to POST to: {REGISTER_ENDPOINT}');
               try {{
                 const response = await fetch('{REGISTER_ENDPOINT}', {{
                   method: 'POST',
@@ -183,6 +185,10 @@ if submitted:
             }})();
             </script>
             """
+
+            # Embed the combined HTML+JS snippet (height=0 keeps it invisible)
+            components.html(html_code, height=0)
+
 
     # 3) Inject that HTML+JS block into the page
     components.html(js, height=0)
