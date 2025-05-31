@@ -461,7 +461,7 @@ with tabs[0]:
             else:
                 if update_trading_config(user_id, new_trading_config):
                     # st.success("Trading configuration updated!")
-                    st.snow()
+                    st.toast("Trading configuration updated!")
 
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
