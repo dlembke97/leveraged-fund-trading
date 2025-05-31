@@ -1,4 +1,4 @@
-name: Build & Deploy Trading & Registration Lambdas
+name: Build & Deploy Trading Lambdas
 
 on:
   push:
@@ -8,7 +8,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FUNCTION_NAME:           ${{ secrets.LAMBDA_FUNCTION_NAME }}
-      REGISTER_FUNCTION_NAME:  ${{ secrets.REGISTER_FUNCTION_NAME }}
       LAYER_BUCKET:            ${{ secrets.LAYER_S3_BUCKET }}
 
     steps:
@@ -87,37 +86,6 @@ jobs:
               break
             else
               echo "⚠️ Conflict updating Trading—retrying in 10s..."
-              sleep 10
-            fi
-          done
-
-      # ─── Registration Lambda packaging & deploy ──────────────────────────────────
-
-      - name: Package Registration Lambda function code
-        run: zip -r register_device.zip lambda_registration
-
-      - name: Update Registration Lambda function code
-        run: |
-          aws lambda update-function-code \
-            --function-name $REGISTER_FUNCTION_NAME \
-            --zip-file fileb://register_device.zip
-
-      - name: Wait for Registration function to be Active
-        run: aws lambda wait function-active --function-name $REGISTER_FUNCTION_NAME
-
-      - name: Attach layer & handler to Registration Lambda (with retry)
-        run: |
-          LAYER_ARN=${{ steps.publish_layer.outputs.layerArn }}
-          for i in {1..6}; do
-            echo "Attempt $i to update Registration configuration..."
-            if aws lambda update-function-configuration \
-                 --function-name $REGISTER_FUNCTION_NAME \
-                 --handler lambda_registration.register_device.lambda_handler \
-                 --layers "$LAYER_ARN"; then
-              echo "✔ Registration Lambda config updated."
-              break
-            else
-              echo "⚠️ Conflict updating Registration—retrying in 10s..."
               sleep 10
             fi
           done
