@@ -1,11 +1,11 @@
 import streamlit as st
 import boto3
-import os
 from botocore.exceptions import ClientError
 
-# ---------- Configuration & DynamoDB setup ----------
+# ─── Configuration & DynamoDB Setup ────────────────────────────────────────────
 TABLE_NAME = st.secrets["DYNAMODB_TABLE_NAME"]
 AWS_REGION = st.secrets["AWS_REGION"]
+SENDER_EMAIL = st.secrets["SENDER_EMAIL"]
 
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 table = dynamodb.Table(TABLE_NAME)
@@ -75,7 +75,6 @@ with tabs[0]:
         else:
             submit_button = st.form_submit_button("Log In")
 
-
     # Handle form submission
     if submit_button:
         if not user_id:
@@ -91,8 +90,8 @@ with tabs[0]:
                 else:
                     if not item:
                         st.error(
-                            "User not found. Please email "
-                            "dlembke97@gmail.com with your preferred username to register!"
+                            f"User not found. Please email {SENDER_EMAIL} "
+                            "with your preferred username to register!"
                         )
                     else:
                         stored_pwd = item.get("trading_app_password", "")
@@ -104,7 +103,7 @@ with tabs[0]:
                             success = update_user_password(user_id, new_pwd)
                             if success:
                                 st.success("Password updated successfully!")
-                                # Optionally clear fields
+                                # Clear out the password fields
                                 st.session_state["login_password"] = ""
                                 st.session_state["current_password"] = ""
                                 st.session_state["new_password"] = ""
@@ -114,8 +113,8 @@ with tabs[0]:
                 # ─── Normal Login Logic ────────────────────────────────────────
                 if not item:
                     st.error(
-                        "User not found. Please email "
-                        "dlembke97@gmail.com with your preferred username to register!"
+                        f"User not found. Please email {SENDER_EMAIL} "
+                        "with your preferred username to register!"
                     )
                 else:
                     stored_pwd = item.get("trading_app_password", "")
@@ -139,17 +138,21 @@ with tabs[1]:
         st.info("Please log in as admin to register new users.")
 
         with st.form("admin_login_form"):
-            admin_user = st.text_input("Admin Username", key="admin_user_id")
-            admin_pwd = st.text_input("Admin Password", type="password", key="admin_password")
+            # Changed key from "admin_user_id" to "admin_user_input"
+            admin_user = st.text_input("Admin Username", key="admin_user_input")
+            # Changed key from "admin_password" to "admin_password_input"
+            admin_pwd = st.text_input(
+                "Admin Password", type="password", key="admin_password_input"
+            )
             login_admin = st.form_submit_button("Log in as Admin")
 
         if login_admin:
             if VALID_USERS.get(admin_user) == admin_pwd:
                 st.session_state["admin_logged_in"] = True
                 st.success(f"Welcome, {admin_user}! You may now register new users.")
-                # Clear any previous form state
-                st.session_state["admin_user_id"] = ""
-                st.session_state["admin_password"] = ""
+                # Clear any previous form state using the same keys
+                st.session_state["admin_user_input"] = ""
+                st.session_state["admin_password_input"] = ""
             else:
                 st.error("Invalid admin credentials.")
 
