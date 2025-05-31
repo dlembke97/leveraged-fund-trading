@@ -269,7 +269,7 @@ with tabs[0]:
                 st.session_state["show_update_credentials"] = False
                 st.rerun()
 
-        # ─── Trading Configuration Section ────────────────────────────────────────
+        # ─── Trading Configuration Section (with amounts) ──────────────────────────
         st.markdown("---")
         st.subheader("Trading Configuration")
 
@@ -290,28 +290,56 @@ with tabs[0]:
             for ticker in tickers:
                 st.markdown(f"**{ticker}** configuration")
                 prev = existing_config.get(ticker, {})
+
+                # Prefill previous triggers and quantities
                 prev_buy = prev.get("buy_triggers", [])
+                prev_buy_qty = prev.get("buy_quantities", [])
                 prev_sell = prev.get("sell_triggers", [])
+                prev_sell_qty = prev.get("sell_quantities", [])
+
                 buy_str = st.text_input(
                     f"{ticker} Buy Triggers (comma-separated)",
                     value=", ".join(str(x) for x in prev_buy),
                     key=f"tc_buy_{ticker}"
+                )
+                buy_qty_str = st.text_input(
+                    f"{ticker} Buy Quantities (comma-separated)",
+                    value=", ".join(str(x) for x in prev_buy_qty),
+                    key=f"tc_buy_qty_{ticker}"
                 )
                 sell_str = st.text_input(
                     f"{ticker} Sell Triggers (comma-separated)",
                     value=", ".join(str(x) for x in prev_sell),
                     key=f"tc_sell_{ticker}"
                 )
+                sell_qty_str = st.text_input(
+                    f"{ticker} Sell Quantities (comma-separated)",
+                    value=", ".join(str(x) for x in prev_sell_qty),
+                    key=f"tc_sell_qty_{ticker}"
+                )
 
-                def parse_trigger_list(text):
+                def parse_int_list(text):
                     try:
                         return [int(x.strip()) for x in text.split(",") if x.strip()]
                     except ValueError:
                         return []
 
+                def parse_float_list(text):
+                    try:
+                        return [float(x.strip()) for x in text.split(",") if x.strip()]
+                    except ValueError:
+                        return []
+
+                buy_triggers = parse_int_list(buy_str)
+                buy_quantities = parse_float_list(buy_qty_str)
+                sell_triggers = parse_int_list(sell_str)
+                sell_quantities = parse_float_list(sell_qty_str)
+
                 new_trading_config[ticker] = {
-                    "buy_triggers": parse_trigger_list(buy_str),
-                    "sell_triggers": parse_trigger_list(sell_str),
+                    "buy_triggers": buy_triggers,
+                    "buy_quantities": buy_quantities,
+                    "sell_triggers": sell_triggers,
+                    "sell_quantities": sell_quantities,
                     "last_buy_price": prev.get("last_buy_price"),
                     "last_sell_price": prev.get("last_sell_price"),
                     "triggered_buy_levels": prev.get("triggered_buy_levels", []),
@@ -371,7 +399,7 @@ with tabs[1]:
             else:
                 password_hash = bcrypt.hashpw(raw_trading_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-                # Initially leave email and Alpaca credentials empty, and trading_config empty
+                # Initially leave email, Alpaca credentials, and trading_config empty
                 item = {
                     "user_id": new_user_id,
                     "password_hash": password_hash,
