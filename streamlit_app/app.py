@@ -52,10 +52,12 @@ st.title("Trading Bot User Registration")
 st.markdown("Complete the form below to register your account and custom trading configuration.")
 
 with st.form(key="registration_form"):
-    user_id = st.text_input("User ID", help="Unique identifier for your account")
+    user_id = st.text_input("Set Username", help="Unique identifier for your account")
+    receiver_email = st.text_input("Email")
+    trading_app_password = st.text_input("Set Your Password", type="password")
     alpaca_api_key = st.text_input("Alpaca API Key")
     alpaca_api_secret = st.text_input("Alpaca API Secret", type="password")
-    receiver_email = st.text_input("Receiver Email")
+
     st.markdown("---")
     st.subheader("Trading Configuration")
     st.markdown("Enter your desired tickers and triggers.")
@@ -85,8 +87,9 @@ if submit:
             'alpaca_api_key': alpaca_api_key,
             'alpaca_api_secret': alpaca_api_secret,
             'sender_email': SENDER_EMAIL,
-            'receiver_email': receiver_email,
             'sender_email_password': SENDER_EMAIL_PASSWORD,
+            'receiver_email': receiver_email,
+            'trading_app_password': trading_app_password,
             'trading_config': trading_config
         }
         try:
