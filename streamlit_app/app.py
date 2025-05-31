@@ -395,7 +395,7 @@ with tabs[0]:
         existing_tickers = list(existing_config.keys())
         ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
         tickers_str = st.text_input(
-            "Tickers (Enter tickets here comma-separated, e.g. TQQQ, SPY)",
+            "Tickers (Enter tickers here comma-separated, e.g. TQQQ, SPY)",
             value=ticker_values,
             help="When you click out of the cell, fillable configs will generate for each ticker you entered",
             key="tc_tickers_str"
