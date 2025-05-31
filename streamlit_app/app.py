@@ -235,7 +235,7 @@ tabs = st.tabs(["Trading Selections", "📝 Registration (Admin Only)"])
 
 # ─── TAB 1: USER LOGIN & TRADING CONFIG ────────────────────────────────────────
 with tabs[0]:
-    st.title("🔒 User Login")
+    st.header("Trading Logic Login")
 
     # Session State Initialization
     if "user_logged_in" not in st.session_state:
@@ -387,7 +387,7 @@ with tabs[0]:
 
         # ── TRADING CONFIGURATION SECTION ──────────────────────────────────────
         st.markdown("---")
-        st.subheader("Threshold Based Trading Configuration")
+        st.header("Threshold Based Trading Configuration")
 
         existing_config = item.get("trading_config", {})
 
