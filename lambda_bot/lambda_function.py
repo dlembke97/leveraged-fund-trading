@@ -8,7 +8,7 @@ from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
 
-# alpaca-py imports
+# alpaca-py import
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
