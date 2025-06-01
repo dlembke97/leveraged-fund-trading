@@ -94,35 +94,39 @@ def get_current_price(
     data_client: StockHistoricalDataClient, symbol: str
 ) -> float | None:
     """
-    Attempts to fetch the latest minute bar; if unavailable, falls back to daily bar.
-    Returns the close price as a float, or None if not found.
+    1) Try to fetch the latest minute bar; if that fails (403 or no data),
+       fall back to today’s daily bar.
+    2) If there is still no bar for `symbol`, return None.
     """
-    # 1) Try fetching the most recent minute bar (limit=1, no start/end means "latest")
-    bars_req = StockBarsRequest(
-        symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
-    )
+    # ─── Try minute bars ─────────────────────────────────────────
     try:
-        bars = data_client.get_stock_bars(bars_req)
-        if bars and bars[symbol]:
-            # bars[symbol] is a list of Bar objects; use the first one's close price
-            return bars[symbol][0].close
+        bars_req = StockBarsRequest(
+            symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
+        )
+        minute_bars = data_client.get_stock_bars(bars_req)
+        # minute_bars is a dict: { symbol: [Bar, …] } if there is data
+        if symbol in minute_bars and minute_bars[symbol]:
+            return minute_bars[symbol][0].close
     except Exception:
         logger.warning(
-            f"Minute data not available for {symbol}, falling back to daily."
+            f"Could not fetch minute bars for {symbol} (403 or no data); falling back to daily."
         )
 
-    # 2) Fall back to today's daily bar
-    today = datetime.date.today().isoformat()
-    bars_req = StockBarsRequest(
-        symbol_or_symbols=[symbol],
-        timeframe=DataTimeFrame.Day,
-        start=today,
-        end=today,
-        limit=1,
-    )
-    bars = data_client.get_stock_bars(bars_req)
-    if bars and bars[symbol]:
-        return bars[symbol][0].close
+    # ─── Fall back to a daily bar for “today” ───────────────────
+    today_iso = datetime.date.today().isoformat()
+    try:
+        bars_req = StockBarsRequest(
+            symbol_or_symbols=[symbol],
+            timeframe=DataTimeFrame.Day,
+            start=today_iso,
+            end=today_iso,
+            limit=1,
+        )
+        daily_bars = data_client.get_stock_bars(bars_req)
+        if symbol in daily_bars and daily_bars[symbol]:
+            return daily_bars[symbol][0].close
+    except Exception:
+        logger.warning(f"Could not fetch daily bar for {symbol} (no data).")
 
     return None
 
