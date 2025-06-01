@@ -8,13 +8,15 @@ from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
 
-# Replace alpaca-trade-api imports with alpaca-py imports:
+# alpaca-py imports
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame as DataTimeFrame
+
+import pandas_market_calendars as mcal
 
 from lambda_bot.common_scripts import EmailManager, setup_logger
 
@@ -32,18 +34,16 @@ SENDER_EMAIL = os.environ["SENDER_EMAIL"]
 SENDER_EMAIL_PASSWORD = os.environ["SENDER_EMAIL_PASSWORD"]
 
 # NYSE calendar for market hours/holidays:
-import pandas_market_calendars as mcal  # unchanged
-
 NYSE = mcal.get_calendar("NYSE")
 
+# ─── Capital Gains Constants ─────────────────────────────────────────────
+LONG_TERM_DAYS = 365
+LTCG_BUFFER_DAYS = 30
+DEFAULT_NOTIONAL = Decimal("1000")
 
-# ─── Helper: Fetch & Decrypt Alpaca Credentials ─────────────────────────────────
+
+# ─── Helper: Fetch & Decrypt Alpaca Credentials ─────────────────────────────
 def get_decrypted_alpaca_creds(user_id: str):
-    """
-    Given a user_id, fetch that item from DynamoDB, then decrypt
-    'encrypted_alpaca_key' and 'encrypted_alpaca_secret' via Fernet.
-    Returns (alpaca_api_key, alpaca_api_secret) as plain strings.
-    """
     try:
         resp = table.get_item(Key={"user_id": user_id})
     except ClientError as e:
@@ -104,7 +104,6 @@ def get_current_price(
             symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
         )
         minute_bars = data_client.get_stock_bars(bars_req)
-        # minute_bars is a dict: { symbol: [Bar, …] } if there is data
         if symbol in minute_bars and minute_bars[symbol]:
             return minute_bars[symbol][0].close
     except Exception:
@@ -131,6 +130,221 @@ def get_current_price(
     return None
 
 
+# ─── FIFO Lot Reconstruction ─────────────────────────────────────────────
+def sync_positions(
+    trading_client: TradingClient, symbol: str, initial_lots: list[dict]
+) -> list[dict]:
+    """
+    Build a FIFO list of {"quantity": float, "timestamp": ISO-string} for this symbol,
+    merging:
+      1) “Closed BUY” orders from Alpaca
+      2) Any user‐supplied initial lots (shares transferred in) in chronological order
+
+    - `initial_lots`: list of {"quantity": float, "timestamp": ISO-string}
+    """
+    now = datetime.datetime.now(ZoneInfo("America/New_York"))
+    # 1) How many shares do we truly hold?
+    try:
+        pos = trading_client.get_position(symbol)
+        total_qty = float(pos.qty)
+    except Exception:
+        return []
+
+    # 2) Get all closed BUY orders, sorted by filled_at
+    orders = trading_client.get_orders(
+        status="closed",
+        side="buy",
+        symbol=symbol,
+        limit=500,
+        after="2000-01-01",
+        until=now.isoformat(),
+    )
+    filled = [o for o in orders if float(o.filled_qty) > 0]
+    filled.sort(key=lambda o: o.filled_at)
+
+    # 3) Walk through Alpaca‐buy orders, building lots until we match total_qty
+    lots: list[dict] = []
+    accumulated = 0.0
+    for o in filled:
+        if accumulated >= total_qty:
+            break
+        qty = min(total_qty - accumulated, float(o.filled_qty))
+        lots.append({"quantity": qty, "timestamp": o.filled_at})
+        accumulated += qty
+
+    # 4) If still below total_qty, drain from initial_lots
+    initial_lots = initial_lots or []
+    sorted_initial = sorted(initial_lots, key=lambda lot: lot["timestamp"])
+    for init_lot in sorted_initial:
+        if accumulated >= total_qty:
+            break
+        qty_avail = float(init_lot.get("quantity", 0.0))
+        if qty_avail <= 0:
+            continue
+        take_qty = min(qty_avail, total_qty - accumulated)
+        lots.append({"quantity": take_qty, "timestamp": init_lot["timestamp"]})
+        accumulated += take_qty
+
+    # 5) If still below, assume leftover was bought “now”
+    if accumulated < total_qty:
+        leftover = total_qty - accumulated
+        lots.append({"quantity": leftover, "timestamp": now.isoformat()})
+        accumulated += leftover
+
+    return lots
+
+
+# ─── Sell Allocation Honoring LTCG & STCG Buffer ─────────────────────────────
+def allocate_and_execute_sells(
+    trading_client: TradingClient,
+    symbol: str,
+    cfg: dict,
+    email_mgr: EmailManager,
+    price: float,
+):
+    """
+    1) Build a true FIFO list of all open lots (each with quantity & timestamp).
+    2) Walk down the FIFO list (oldest → newest). For each lot:
+         • If LTCG (age ≥ LONG_TERM_DAYS), sell as much as needed from that lot.
+         • Else if ST_far (age < LONG_TERM_DAYS - LTCG_BUFFER_DAYS), sell as much as needed.
+         • Else if (LONG_TERM_DAYS - LTCG_BUFFER_DAYS) ≤ age < LONG_TERM_DAYS → ST_near:
+             STOP processing further lots (cannot skip over ST_near).
+    3) Issue one MARKET‐sell order per eligible lot chunk (so Alpaca’s FIFO will drain exactly that lot).
+    4) If total_sold_shares == 0 (i.e. threshold was triggered but every lot was ST_near),
+       send an email explaining “no eligible shares to sell.”
+    5) Otherwise (some shares sold), perform any “sell_reallocate” logic and send the usual summary.
+    """
+    now = datetime.datetime.now(ZoneInfo("America/New_York"))
+
+    # 1) Determine how many shares we want to sell (based on notional)
+    notional = Decimal(str(cfg.get("sell_notional", DEFAULT_NOTIONAL)))
+    shares_to_sell = float(notional / price) if price > 0 else 0.0
+    if shares_to_sell <= 0:
+        return  # nothing to sell
+
+    # 2) Reconstruct current FIFO list of lots
+    positions = cfg.setdefault("positions", [])
+    if not positions:
+        positions[:] = sync_positions(
+            trading_client, symbol, cfg.get("initial_lots", [])
+        )
+
+    # Build a sorted list of (idx, quantity_remaining, timestamp) by timestamp ascending
+    fifo_list = sorted(
+        [(idx, lot["quantity"], lot["timestamp"]) for idx, lot in enumerate(positions)],
+        key=lambda entry: datetime.datetime.fromisoformat(entry[2]),
+    )
+
+    total_sold_shares = 0.0
+    total_LTCG_proceeds = Decimal("0.0")
+    total_STCG_proceeds = Decimal("0.0")
+
+    # 3) Walk through each lot in true FIFO order
+    for idx, avail_qty, ts_iso in fifo_list:
+        if total_sold_shares >= shares_to_sell:
+            break  # we've sold enough shares
+
+        buy_ts = datetime.datetime.fromisoformat(ts_iso)
+        age_days = (now - buy_ts).days
+
+        # If this lot is ST_near (inside buffer window), stop entirely
+        if (age_days >= (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)) and (
+            age_days < LONG_TERM_DAYS
+        ):
+            logger.info(
+                f"{symbol}: encountered ST_near lot (age {age_days} days). "
+                "Stopping further sells to avoid STCG."
+            )
+            break
+
+        # If this lot is LTCG (age ≥ LONG_TERM_DAYS) or ST_far (age < LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
+        if (age_days >= LONG_TERM_DAYS) or (
+            age_days < (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
+        ):
+            qty_left_to_sell = shares_to_sell - total_sold_shares
+            qty_from_this_lot = min(avail_qty, qty_left_to_sell)
+
+            if qty_from_this_lot <= 0:
+                continue
+
+            # Place one MARKET sell order for exactly qty_from_this_lot
+            sell_req = MarketOrderRequest(
+                symbol=symbol,
+                qty=str(qty_from_this_lot),
+                side=OrderSide.SELL,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.DAY,
+            )
+            try:
+                order = trading_client.submit_order(sell_req)
+            except Exception:
+                logger.warning(f"Wash trade block on sell {symbol}; retrying in 1s")
+                time.sleep(1)
+                order = trading_client.submit_order(sell_req)
+            wait_for_fill(trading_client, order.id)
+
+            # Deduct those shares from this FIFO lot in our local `positions` array
+            positions[idx]["quantity"] -= qty_from_this_lot
+            total_sold_shares += qty_from_this_lot
+
+            # Classify proceeds as LTCG or STCG
+            proceeds = Decimal(str(qty_from_this_lot * price))
+            if age_days >= LONG_TERM_DAYS:
+                total_LTCG_proceeds += proceeds
+            else:
+                total_STCG_proceeds += proceeds
+
+    # 4) Clean up any fully-sold lots
+    cfg["positions"] = [lot for lot in positions if lot.get("quantity", 0) > 0]
+
+    # 5) If nothing sold but trigger fired, send a “nothing sold” email
+    if total_sold_shares == 0:
+        email_mgr.send_trigger_alert(
+            f"{symbol} reached the sell threshold at price ${price:.2f}, "
+            "but no shares were sold because all lots are within the short-term buffer window."
+        )
+        return
+
+    # 6) If we did sell some shares, perform the “sell_reallocate” logic
+    total_proceeds = (Decimal(str(total_sold_shares * price))).quantize(Decimal("0.01"))
+    sell_realloc = cfg.get("sell_reallocate", {"enabled": False})
+    if sell_realloc.get("enabled", False):
+        for tgt in sell_realloc.get("targets", []):
+            tgt_ticker = tgt["ticker"]
+            proportion = tgt["proportion"]  # Decimal
+            dollars_to_reinvest = (total_proceeds * proportion).quantize(
+                Decimal("0.01")
+            )
+            if dollars_to_reinvest > 0:
+                buy_req = MarketOrderRequest(
+                    symbol=tgt_ticker,
+                    notional=str(dollars_to_reinvest),
+                    side=OrderSide.BUY,
+                    type=OrderType.MARKET,
+                    time_in_force=TimeInForce.DAY,
+                )
+                try:
+                    buy_order = trading_client.submit_order(buy_req)
+                    wait_for_fill(trading_client, buy_order.id)
+                    email_mgr.send_trigger_alert(
+                        f"{tgt_ticker} re-invested ${dollars_to_reinvest} from sale of {symbol}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to re-invest into {tgt_ticker}: {e}")
+
+    # 7) Finally, send the usual “sold X shares” summary
+    skipped_shares = shares_to_sell - total_sold_shares
+    skipped_proceeds = Decimal(str(skipped_shares * price)).quantize(Decimal("0.01"))
+    cfg["last_sell_price"] = price
+
+    email_mgr.send_trigger_alert(
+        f"{symbol} sold ${total_proceeds:.2f} "
+        f"(LTCG=${total_LTCG_proceeds:.2f}, STCG=${total_STCG_proceeds:.2f}); "
+        f"skipped ${skipped_proceeds:.2f} due to ST_near lots"
+    )
+
+
+# ─── Core Trading Logic (one_cycle) ─────────────────────────────────────────
 def one_cycle(
     trading_client: TradingClient,
     data_client: StockHistoricalDataClient,
@@ -139,16 +353,24 @@ def one_cycle(
 ) -> dict:
     """
     Executes one iteration of buy/sell logic for every symbol in `config`.
-    Integrates two new blocks per‐ticker:
-      - cfg["sell_reallocate"]: if enabled, reinvest sale proceeds
-      - cfg["buy_funding"]: if type="sell", first sell other tickers to fund the buy
-    Quantities are all dollar‐notional (Decimal).
-    Returns the possibly‐updated config dictionary.
+    - If consider_long_vs_short_term_gains = False: use the original SELL logic.
+    - If True: use allocate_and_execute_sells(...) instead.
+    Returns the updated `config`.
     """
     for symbol, cfg in config.items():
         price = get_current_price(data_client, symbol)
         if price is None:
             continue
+
+        # Ensure defaults for new fields
+        cfg.setdefault(
+            "triggered_sell_levels", set(cfg.get("triggered_sell_levels", []))
+        )
+        cfg.setdefault("triggered_buy_levels", set(cfg.get("triggered_buy_levels", [])))
+        cfg.setdefault("consider_long_vs_short_term_gains", False)
+        cfg.setdefault("initial_lots", cfg.get("initial_lots", []))
+        cfg.setdefault("positions", cfg.get("positions", []))
+        cfg.setdefault("sell_notional", cfg.get("sell_notional", DEFAULT_NOTIONAL))
 
         # ─── SELL logic ─────────────────────────────────────
         sell_pairs = sorted(
@@ -156,63 +378,68 @@ def one_cycle(
             key=lambda pair: pair[0],
         )
         for trigger, qty_decimal in sell_pairs:
-            if price >= trigger and trigger not in cfg.get(
-                "triggered_sell_levels", set()
-            ):
-                # 1) Place the triggered sell for this ticker
-                order_request = MarketOrderRequest(
-                    symbol=symbol,
-                    notional=str(qty_decimal),  # dollar amount
-                    side=OrderSide.SELL,
-                    time_in_force=TimeInForce.Day,
-                )
-                try:
-                    order = trading_client.submit_order(order_request)
-                except Exception as e:
-                    # Mirror the old APIError retry logic for wash sale blocks
-                    logger.warning(
-                        f"Wash trade block on sell {symbol}@{trigger}; retrying in 1s"
+            if price >= trigger and trigger not in cfg["triggered_sell_levels"]:
+                if cfg["consider_long_vs_short_term_gains"]:
+                    # Lot-aware sell
+                    # Ensure sell_notional is set from sell_quantities if not overridden
+                    cfg["sell_notional"] = qty_decimal
+                    allocate_and_execute_sells(
+                        trading_client, symbol, cfg, email_mgr, price
                     )
-                    time.sleep(1)
-                    order = trading_client.submit_order(order_request)
-
-                wait_for_fill(trading_client, order.id)
-
-                # Mark this trigger as fired
-                cfg.setdefault("triggered_sell_levels", set()).add(trigger)
-                email_mgr.send_trigger_alert(
-                    f"{symbol} sold at {trigger} (notional=${qty_decimal})"
-                )
-
-                # 2) Re‐allocate proceeds if requested
-                sell_realloc = cfg.get("sell_reallocate", {"enabled": False})
-                if sell_realloc.get("enabled", False):
-                    total_sell_usd = qty_decimal  # entire proceed in USD
-
-                    for tgt in sell_realloc.get("targets", []):
-                        tgt_ticker = tgt["ticker"]
-                        proportion = tgt["proportion"]  # Decimal
-                        dollars_to_invest = (total_sell_usd * proportion).quantize(
-                            Decimal("0.01")
+                    # Mark trigger as fired
+                    cfg["triggered_sell_levels"].add(trigger)
+                else:
+                    # Original notional-based sell
+                    order_request = MarketOrderRequest(
+                        symbol=symbol,
+                        notional=str(qty_decimal),  # dollar amount
+                        side=OrderSide.SELL,
+                        type=OrderType.MARKET,
+                        time_in_force=TimeInForce.DAY,
+                    )
+                    try:
+                        order = trading_client.submit_order(order_request)
+                    except Exception:
+                        logger.warning(
+                            f"Wash trade block on sell {symbol}@{trigger}; retrying in 1s"
                         )
-                        if dollars_to_invest > 0:
-                            try:
+                        time.sleep(1)
+                        order = trading_client.submit_order(order_request)
+
+                    wait_for_fill(trading_client, order.id)
+                    cfg["triggered_sell_levels"].add(trigger)
+                    email_mgr.send_trigger_alert(
+                        f"{symbol} sold at {trigger} (notional=${qty_decimal})"
+                    )
+
+                    sell_realloc = cfg.get("sell_reallocate", {"enabled": False})
+                    if sell_realloc.get("enabled", False):
+                        total_sell_usd = qty_decimal
+                        for tgt in sell_realloc.get("targets", []):
+                            tgt_ticker = tgt["ticker"]
+                            proportion = tgt["proportion"]
+                            dollars_to_invest = (
+                                Decimal(str(total_sell_usd)) * proportion
+                            ).quantize(Decimal("0.01"))
+                            if dollars_to_invest > 0:
                                 buy_req = MarketOrderRequest(
                                     symbol=tgt_ticker,
                                     notional=str(dollars_to_invest),
                                     side=OrderSide.BUY,
-                                    time_in_force=TimeInForce.Day,
+                                    type=OrderType.MARKET,
+                                    time_in_force=TimeInForce.DAY,
                                 )
-                                buy_order = trading_client.submit_order(buy_req)
-                                wait_for_fill(trading_client, buy_order.id)
-                                email_mgr.send_trigger_alert(
-                                    f"{tgt_ticker} re‐invested ${dollars_to_invest} "
-                                    f"from sale of {symbol}@{trigger}"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to re‐invest into {tgt_ticker}: {e}"
-                                )
+                                try:
+                                    buy_order = trading_client.submit_order(buy_req)
+                                    wait_for_fill(trading_client, buy_order.id)
+                                    email_mgr.send_trigger_alert(
+                                        f"{tgt_ticker} re-invested ${dollars_to_invest} "
+                                        f"from sale of {symbol}@{trigger}"
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Failed to re-invest into {tgt_ticker}: {e}"
+                                    )
                 break  # only one triggered sell per cycle
 
         # ─── BUY logic ──────────────────────────────────────
@@ -221,18 +448,16 @@ def one_cycle(
             key=lambda pair: pair[0],
         )
         for trigger, qty_decimal in buy_pairs:
-            if price <= trigger and trigger not in cfg.get(
-                "triggered_buy_levels", set()
-            ):
+            if price <= trigger and trigger not in cfg["triggered_buy_levels"]:
                 buy_fund = cfg.get("buy_funding", {"type": "cash"})
 
                 if buy_fund.get("type") == "cash":
-                    # 1A) Straight cash‐balance buy
                     order_request = MarketOrderRequest(
                         symbol=symbol,
                         notional=str(qty_decimal),
                         side=OrderSide.BUY,
-                        time_in_force=TimeInForce.Day,
+                        type=OrderType.MARKET,
+                        time_in_force=TimeInForce.DAY,
                     )
                     try:
                         order = trading_client.submit_order(order_request)
@@ -244,28 +469,28 @@ def one_cycle(
                         order = trading_client.submit_order(order_request)
 
                     wait_for_fill(trading_client, order.id)
-                    cfg.setdefault("triggered_buy_levels", set()).add(trigger)
+                    cfg["triggered_buy_levels"].add(trigger)
                     email_mgr.send_trigger_alert(
                         f"{symbol} bought at {trigger} (notional=${qty_decimal})"
                     )
 
                 else:
-                    # 1B) Sell other ticker(s) first to raise funds
                     total_needed = qty_decimal
                     for source in buy_fund.get("sources", []):
                         src_ticker = source["ticker"]
-                        proportion = source["proportion"]  # Decimal
+                        proportion = source["proportion"]
                         usd_from_src = (total_needed * proportion).quantize(
                             Decimal("0.01")
                         )
                         if usd_from_src > 0:
+                            sell_req = MarketOrderRequest(
+                                symbol=src_ticker,
+                                notional=str(usd_from_src),
+                                side=OrderSide.SELL,
+                                type=OrderType.MARKET,
+                                time_in_force=TimeInForce.DAY,
+                            )
                             try:
-                                sell_req = MarketOrderRequest(
-                                    symbol=src_ticker,
-                                    notional=str(usd_from_src),
-                                    side=OrderSide.SELL,
-                                    time_in_force=TimeInForce.Day,
-                                )
                                 sell_order = trading_client.submit_order(sell_req)
                                 wait_for_fill(trading_client, sell_order.id)
                                 email_mgr.send_trigger_alert(
@@ -277,12 +502,12 @@ def one_cycle(
                                     f"Failed to sell {src_ticker} for funding: {e}"
                                 )
 
-                    # 2) Now place the intended buy
                     order_request = MarketOrderRequest(
                         symbol=symbol,
                         notional=str(qty_decimal),
                         side=OrderSide.BUY,
-                        time_in_force=TimeInForce.Day,
+                        type=OrderType.MARKET,
+                        time_in_force=TimeInForce.DAY,
                     )
                     try:
                         order = trading_client.submit_order(order_request)
@@ -294,7 +519,7 @@ def one_cycle(
                         order = trading_client.submit_order(order_request)
 
                     wait_for_fill(trading_client, order.id)
-                    cfg.setdefault("triggered_buy_levels", set()).add(trigger)
+                    cfg["triggered_buy_levels"].add(trigger)
                     email_mgr.send_trigger_alert(
                         f"{symbol} bought at {trigger} (notional=${qty_decimal})"
                     )
@@ -318,36 +543,41 @@ def lambda_handler(event, context):
         logger.info(f"Processing user {user_id}")
 
         try:
+            # 1) Decrypt credentials
             alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
-        except RuntimeError as err:
-            logger.error(f"Skipping {user_id}: {err}")
-            continue
 
-        # Instantiate alpaca-py clients:
-        trading_client = TradingClient(
-            alpaca_api_key, alpaca_api_secret, paper=True  # use paper trading endpoint
-        )
-        data_client = StockHistoricalDataClient(alpaca_api_key, alpaca_api_secret)
+            # 2) Instantiate alpaca-py clients
+            trading_client = TradingClient(
+                alpaca_api_key, alpaca_api_secret, paper=True
+            )
+            data_client = StockHistoricalDataClient(alpaca_api_key, alpaca_api_secret)
 
-        email_mgr = EmailManager(
-            sender_email=SENDER_EMAIL,
-            receiver_email=u.get("receiver_email"),
-            sender_password=SENDER_EMAIL_PASSWORD,
-        )
+            email_mgr = EmailManager(
+                sender_email=SENDER_EMAIL,
+                receiver_email=u.get("receiver_email"),
+                sender_password=SENDER_EMAIL_PASSWORD,
+            )
 
-        # Ensure "triggered_*_levels" are sets
-        trading_cfg = u.get("trading_config", {})
-        trading_cfg.setdefault(
-            "triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", []))
-        )
-        trading_cfg.setdefault(
-            "triggered_sell_levels", set(trading_cfg.get("triggered_sell_levels", []))
-        )
+            # 3) Ensure sets/lists exist
+            trading_cfg = u.get("trading_config", {})
+            trading_cfg.setdefault(
+                "triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", []))
+            )
+            trading_cfg.setdefault(
+                "triggered_sell_levels",
+                set(trading_cfg.get("triggered_sell_levels", [])),
+            )
+            trading_cfg.setdefault("consider_long_vs_short_term_gains", False)
+            trading_cfg.setdefault("initial_lots", trading_cfg.get("initial_lots", []))
+            trading_cfg.setdefault("positions", trading_cfg.get("positions", []))
+            trading_cfg.setdefault(
+                "sell_notional", trading_cfg.get("sell_notional", DEFAULT_NOTIONAL)
+            )
 
-        try:
+            # 4) Run one cycle for this user
             updated_cfg = one_cycle(trading_client, data_client, trading_cfg, email_mgr)
 
-            # Convert sets back to lists before saving to DynamoDB
+            # 5) Persist changes (convert sets back to lists)
             updated_cfg["triggered_buy_levels"] = list(
                 updated_cfg.get("triggered_buy_levels", [])
             )
@@ -360,7 +590,10 @@ def lambda_handler(event, context):
                 UpdateExpression="SET trading_config = :cfg",
                 ExpressionAttributeValues={":cfg": updated_cfg},
             )
+
         except Exception as e:
+            # Log the error and continue with the next user
             logger.error(f"Error for user {user_id}: {e}", exc_info=True)
+            continue
 
     return {"statusCode": 200, "body": "Processed users"}
