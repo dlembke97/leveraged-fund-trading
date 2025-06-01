@@ -543,40 +543,41 @@ def lambda_handler(event, context):
         logger.info(f"Processing user {user_id}")
 
         try:
+            # 1) Decrypt credentials
             alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
-        except RuntimeError as err:
-            logger.error(f"Skipping {user_id}: {err}")
-            continue
 
-        # Instantiate alpaca-py clients
-        trading_client = TradingClient(alpaca_api_key, alpaca_api_secret, paper=True)
-        data_client = StockHistoricalDataClient(alpaca_api_key, alpaca_api_secret)
+            # 2) Instantiate alpaca-py clients
+            trading_client = TradingClient(
+                alpaca_api_key, alpaca_api_secret, paper=True
+            )
+            data_client = StockHistoricalDataClient(alpaca_api_key, alpaca_api_secret)
 
-        email_mgr = EmailManager(
-            sender_email=SENDER_EMAIL,
-            receiver_email=u.get("receiver_email"),
-            sender_password=SENDER_EMAIL_PASSWORD,
-        )
+            email_mgr = EmailManager(
+                sender_email=SENDER_EMAIL,
+                receiver_email=u.get("receiver_email"),
+                sender_password=SENDER_EMAIL_PASSWORD,
+            )
 
-        # Ensure "triggered_*_levels" are sets
-        trading_cfg = u.get("trading_config", {})
-        trading_cfg.setdefault(
-            "triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", []))
-        )
-        trading_cfg.setdefault(
-            "triggered_sell_levels", set(trading_cfg.get("triggered_sell_levels", []))
-        )
-        trading_cfg.setdefault("consider_long_vs_short_term_gains", False)
-        trading_cfg.setdefault("initial_lots", trading_cfg.get("initial_lots", []))
-        trading_cfg.setdefault("positions", trading_cfg.get("positions", []))
-        trading_cfg.setdefault(
-            "sell_notional", trading_cfg.get("sell_notional", DEFAULT_NOTIONAL)
-        )
+            # 3) Ensure sets/lists exist
+            trading_cfg = u.get("trading_config", {})
+            trading_cfg.setdefault(
+                "triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", []))
+            )
+            trading_cfg.setdefault(
+                "triggered_sell_levels",
+                set(trading_cfg.get("triggered_sell_levels", [])),
+            )
+            trading_cfg.setdefault("consider_long_vs_short_term_gains", False)
+            trading_cfg.setdefault("initial_lots", trading_cfg.get("initial_lots", []))
+            trading_cfg.setdefault("positions", trading_cfg.get("positions", []))
+            trading_cfg.setdefault(
+                "sell_notional", trading_cfg.get("sell_notional", DEFAULT_NOTIONAL)
+            )
 
-        try:
+            # 4) Run one cycle for this user
             updated_cfg = one_cycle(trading_client, data_client, trading_cfg, email_mgr)
 
-            # Convert sets back to lists for DynamoDB
+            # 5) Persist changes (convert sets back to lists)
             updated_cfg["triggered_buy_levels"] = list(
                 updated_cfg.get("triggered_buy_levels", [])
             )
@@ -589,7 +590,10 @@ def lambda_handler(event, context):
                 UpdateExpression="SET trading_config = :cfg",
                 ExpressionAttributeValues={":cfg": updated_cfg},
             )
+
         except Exception as e:
+            # Log the error and continue with the next user
             logger.error(f"Error for user {user_id}: {e}", exc_info=True)
+            continue
 
     return {"statusCode": 200, "body": "Processed users"}
