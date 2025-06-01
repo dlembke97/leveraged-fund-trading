@@ -99,7 +99,7 @@ def get_current_price(
     """
     # 1) Try fetching the most recent minute bar (limit=1, no start/end means "latest")
     bars_req = StockBarsRequest(
-        symbol_or_symbols=[symbol], timeframe=DataTimeFrame.MINUTE, limit=1
+        symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
     )
     try:
         bars = data_client.get_stock_bars(bars_req)
@@ -115,7 +115,7 @@ def get_current_price(
     today = datetime.date.today().isoformat()
     bars_req = StockBarsRequest(
         symbol_or_symbols=[symbol],
-        timeframe=DataTimeFrame.DAY,
+        timeframe=DataTimeFrame.Day,
         start=today,
         end=today,
         limit=1,
@@ -160,7 +160,7 @@ def one_cycle(
                     symbol=symbol,
                     notional=str(qty_decimal),  # dollar amount
                     side=OrderSide.SELL,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=TimeInForce.Day,
                 )
                 try:
                     order = trading_client.submit_order(order_request)
@@ -197,7 +197,7 @@ def one_cycle(
                                     symbol=tgt_ticker,
                                     notional=str(dollars_to_invest),
                                     side=OrderSide.BUY,
-                                    time_in_force=TimeInForce.DAY,
+                                    time_in_force=TimeInForce.Day,
                                 )
                                 buy_order = trading_client.submit_order(buy_req)
                                 wait_for_fill(trading_client, buy_order.id)
@@ -228,7 +228,7 @@ def one_cycle(
                         symbol=symbol,
                         notional=str(qty_decimal),
                         side=OrderSide.BUY,
-                        time_in_force=TimeInForce.DAY,
+                        time_in_force=TimeInForce.Day,
                     )
                     try:
                         order = trading_client.submit_order(order_request)
@@ -260,7 +260,7 @@ def one_cycle(
                                     symbol=src_ticker,
                                     notional=str(usd_from_src),
                                     side=OrderSide.SELL,
-                                    time_in_force=TimeInForce.DAY,
+                                    time_in_force=TimeInForce.Day,
                                 )
                                 sell_order = trading_client.submit_order(sell_req)
                                 wait_for_fill(trading_client, sell_order.id)
@@ -278,7 +278,7 @@ def one_cycle(
                         symbol=symbol,
                         notional=str(qty_decimal),
                         side=OrderSide.BUY,
-                        time_in_force=TimeInForce.DAY,
+                        time_in_force=TimeInForce.Day,
                     )
                     try:
                         order = trading_client.submit_order(order_request)
