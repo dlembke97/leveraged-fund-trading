@@ -7,8 +7,15 @@ import boto3
 from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
-from alpaca_trade_api.rest import REST, TimeFrame, APIError
-import pandas_market_calendars as mcal
+
+# Replace alpaca-trade-api imports with alpaca-py imports:
+from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame as DataTimeFrame
+
 from lambda_bot.common_scripts import EmailManager, setup_logger
 
 # ─── Setup ───────────────────────────────────────────────
@@ -25,6 +32,8 @@ SENDER_EMAIL = os.environ["SENDER_EMAIL"]
 SENDER_EMAIL_PASSWORD = os.environ["SENDER_EMAIL_PASSWORD"]
 
 # NYSE calendar for market hours/holidays:
+import pandas_market_calendars as mcal  # unchanged
+
 NYSE = mcal.get_calendar("NYSE")
 
 
@@ -70,40 +79,70 @@ def is_market_open():
     return open_dt <= now <= close_dt
 
 
-def wait_for_fill(api, order_id, interval=0.5):
+def wait_for_fill(trading_client: TradingClient, order_id: str, interval: float = 0.5):
+    """
+    Polls Alpaca until the given order_id is filled.
+    """
     while True:
-        o = api.get_order(order_id)
-        if o.status == "filled":
+        order = trading_client.get_order_by_id(order_id)
+        if order.status == "filled":
             return
         time.sleep(interval)
 
 
-def get_current_price(api, symbol):
+def get_current_price(
+    data_client: StockHistoricalDataClient, symbol: str
+) -> float | None:
+    """
+    Attempts to fetch the latest minute bar; if unavailable, falls back to daily bar.
+    Returns the close price as a float, or None if not found.
+    """
+    # 1) Try fetching the most recent minute bar (limit=1, no start/end means "latest")
+    bars_req = StockBarsRequest(
+        symbol_or_symbols=[symbol], timeframe=DataTimeFrame.MINUTE, limit=1
+    )
     try:
-        bars = list(api.get_bars(symbol, TimeFrame.Minute, limit=1))
-        if bars and bars[0]:
-            return bars[0].c
+        bars = data_client.get_stock_bars(bars_req)
+        if bars and bars[symbol]:
+            # bars[symbol] is a list of Bar objects; use the first one's close price
+            return bars[symbol][0].close
     except Exception:
         logger.warning(
             f"Minute data not available for {symbol}, falling back to daily."
         )
-    today = datetime.date.today()
-    bars = list(api.get_bars(symbol, TimeFrame.Day, start=today.isoformat(), limit=1))
-    if bars:
-        return bars[0].c
+
+    # 2) Fall back to today's daily bar
+    today = datetime.date.today().isoformat()
+    bars_req = StockBarsRequest(
+        symbol_or_symbols=[symbol],
+        timeframe=DataTimeFrame.DAY,
+        start=today,
+        end=today,
+        limit=1,
+    )
+    bars = data_client.get_stock_bars(bars_req)
+    if bars and bars[symbol]:
+        return bars[symbol][0].close
+
     return None
 
 
-def one_cycle(api, config: dict, email_mgr: EmailManager):
+def one_cycle(
+    trading_client: TradingClient,
+    data_client: StockHistoricalDataClient,
+    config: dict,
+    email_mgr: EmailManager,
+) -> dict:
     """
     Executes one iteration of buy/sell logic for every symbol in `config`.
-    Now integrates two new blocks per‐ticker:
+    Integrates two new blocks per‐ticker:
       - cfg["sell_reallocate"]: if enabled, reinvest sale proceeds
       - cfg["buy_funding"]: if type="sell", first sell other tickers to fund the buy
     Quantities are all dollar‐notional (Decimal).
+    Returns the possibly‐updated config dictionary.
     """
     for symbol, cfg in config.items():
-        price = get_current_price(api, symbol)
+        price = get_current_price(data_client, symbol)
         if price is None:
             continue
 
@@ -117,28 +156,24 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
                 "triggered_sell_levels", set()
             ):
                 # 1) Place the triggered sell for this ticker
+                order_request = MarketOrderRequest(
+                    symbol=symbol,
+                    notional=str(qty_decimal),  # dollar amount
+                    side=OrderSide.SELL,
+                    time_in_force=TimeInForce.DAY,
+                )
                 try:
-                    order = api.submit_order(
-                        symbol=symbol,
-                        notional=str(qty_decimal),  # dollar amount
-                        side="sell",
-                        type="market",
-                        time_in_force="day",
-                    )
-                except APIError:
+                    order = trading_client.submit_order(order_request)
+                except Exception as e:
+                    # Mirror the old APIError retry logic for wash sale blocks
                     logger.warning(
                         f"Wash trade block on sell {symbol}@{trigger}; retrying in 1s"
                     )
                     time.sleep(1)
-                    order = api.submit_order(
-                        symbol=symbol,
-                        notional=str(qty_decimal),
-                        side="sell",
-                        type="market",
-                        time_in_force="day",
-                    )
+                    order = trading_client.submit_order(order_request)
 
-                wait_for_fill(api, order.id)
+                wait_for_fill(trading_client, order.id)
+
                 # Mark this trigger as fired
                 cfg.setdefault("triggered_sell_levels", set()).add(trigger)
                 email_mgr.send_trigger_alert(
@@ -158,14 +193,14 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
                         )
                         if dollars_to_invest > 0:
                             try:
-                                buy_order = api.submit_order(
+                                buy_req = MarketOrderRequest(
                                     symbol=tgt_ticker,
                                     notional=str(dollars_to_invest),
-                                    side="buy",
-                                    type="market",
-                                    time_in_force="day",
+                                    side=OrderSide.BUY,
+                                    time_in_force=TimeInForce.DAY,
                                 )
-                                wait_for_fill(api, buy_order.id)
+                                buy_order = trading_client.submit_order(buy_req)
+                                wait_for_fill(trading_client, buy_order.id)
                                 email_mgr.send_trigger_alert(
                                     f"{tgt_ticker} re‐invested ${dollars_to_invest} "
                                     f"from sale of {symbol}@{trigger}"
@@ -189,27 +224,22 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
 
                 if buy_fund.get("type") == "cash":
                     # 1A) Straight cash‐balance buy
+                    order_request = MarketOrderRequest(
+                        symbol=symbol,
+                        notional=str(qty_decimal),
+                        side=OrderSide.BUY,
+                        time_in_force=TimeInForce.DAY,
+                    )
                     try:
-                        order = api.submit_order(
-                            symbol=symbol,
-                            notional=str(qty_decimal),
-                            side="buy",
-                            type="market",
-                            time_in_force="day",
-                        )
-                    except APIError:
+                        order = trading_client.submit_order(order_request)
+                    except Exception:
                         logger.warning(
                             f"Wash trade block on buy {symbol}@{trigger}; retrying in 1s"
                         )
                         time.sleep(1)
-                        order = api.submit_order(
-                            symbol=symbol,
-                            notional=str(qty_decimal),
-                            side="buy",
-                            type="market",
-                            time_in_force="day",
-                        )
-                    wait_for_fill(api, order.id)
+                        order = trading_client.submit_order(order_request)
+
+                    wait_for_fill(trading_client, order.id)
                     cfg.setdefault("triggered_buy_levels", set()).add(trigger)
                     email_mgr.send_trigger_alert(
                         f"{symbol} bought at {trigger} (notional=${qty_decimal})"
@@ -226,14 +256,14 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
                         )
                         if usd_from_src > 0:
                             try:
-                                sell_order = api.submit_order(
+                                sell_req = MarketOrderRequest(
                                     symbol=src_ticker,
                                     notional=str(usd_from_src),
-                                    side="sell",
-                                    type="market",
-                                    time_in_force="day",
+                                    side=OrderSide.SELL,
+                                    time_in_force=TimeInForce.DAY,
                                 )
-                                wait_for_fill(api, sell_order.id)
+                                sell_order = trading_client.submit_order(sell_req)
+                                wait_for_fill(trading_client, sell_order.id)
                                 email_mgr.send_trigger_alert(
                                     f"{src_ticker} sold for ${usd_from_src} "
                                     f"to fund buy of {symbol}@{trigger}"
@@ -244,27 +274,22 @@ def one_cycle(api, config: dict, email_mgr: EmailManager):
                                 )
 
                     # 2) Now place the intended buy
+                    order_request = MarketOrderRequest(
+                        symbol=symbol,
+                        notional=str(qty_decimal),
+                        side=OrderSide.BUY,
+                        time_in_force=TimeInForce.DAY,
+                    )
                     try:
-                        order = api.submit_order(
-                            symbol=symbol,
-                            notional=str(qty_decimal),
-                            side="buy",
-                            type="market",
-                            time_in_force="day",
-                        )
-                    except APIError:
+                        order = trading_client.submit_order(order_request)
+                    except Exception:
                         logger.warning(
                             f"Wash trade block on buy {symbol}@{trigger}; retrying in 1s"
                         )
                         time.sleep(1)
-                        order = api.submit_order(
-                            symbol=symbol,
-                            notional=str(qty_decimal),
-                            side="buy",
-                            type="market",
-                            time_in_force="day",
-                        )
-                    wait_for_fill(api, order.id)
+                        order = trading_client.submit_order(order_request)
+
+                    wait_for_fill(trading_client, order.id)
                     cfg.setdefault("triggered_buy_levels", set()).add(trigger)
                     email_mgr.send_trigger_alert(
                         f"{symbol} bought at {trigger} (notional=${qty_decimal})"
@@ -294,11 +319,11 @@ def lambda_handler(event, context):
             logger.error(f"Skipping {user_id}: {err}")
             continue
 
-        api = REST(
-            alpaca_api_key,
-            alpaca_api_secret,
-            base_url="https://paper-api.alpaca.markets",
+        # Instantiate alpaca-py clients:
+        trading_client = TradingClient(
+            alpaca_api_key, alpaca_api_secret, paper=True  # use paper trading endpoint
         )
+        data_client = StockHistoricalDataClient(alpaca_api_key, alpaca_api_secret)
 
         email_mgr = EmailManager(
             sender_email=SENDER_EMAIL,
@@ -316,7 +341,7 @@ def lambda_handler(event, context):
         )
 
         try:
-            updated_cfg = one_cycle(api, trading_cfg, email_mgr)
+            updated_cfg = one_cycle(trading_client, data_client, trading_cfg, email_mgr)
 
             # Convert sets back to lists before saving to DynamoDB
             updated_cfg["triggered_buy_levels"] = list(
