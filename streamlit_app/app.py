@@ -100,44 +100,12 @@ def update_trading_config(user_id: str, config: dict) -> bool:
         return False
 
 
-# ─── NEW HELPERS FOR X TRADING ─────────────────────────────────────────────────
-
-
-def fetch_twitter_config(user_id: str) -> dict:
-    """
-    Read twitter_config from Users table. Return defaults if missing.
-    """
-    item = get_user_item(user_id)
-    if not item:
-        return {"enabled": False, "handle": ""}
-    return item.get("twitter_config", {"enabled": False, "handle": ""})
-
-
-def update_twitter_config(user_id: str, enabled: bool, handle: str) -> bool:
-    """
-    Write twitter_config = {enabled: <bool>, handle: <str>} back to Users.
-    """
-    tc = {"enabled": enabled, "handle": handle}
-    try:
-        table.update_item(
-            Key={"user_id": user_id},
-            UpdateExpression="SET twitter_config = :t",
-            ExpressionAttributeValues={":t": tc},
-        )
-        return True
-    except ClientError as e:
-        st.error(
-            f"Failed to update X trading settings: {e.response['Error']['Message']}"
-        )
-        return False
-
-
 def edit_trigger_quantity_table(
     key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None
 ):
     """
-    Renders a two‐column data_editor labelled “Trigger” and “Quantity (USD)”.
-    Returns: (List[int], List[Decimal]) based on edited DataFrame.
+    Renders a two‐column data_editor labelled "Trigger" and "Quantity (USD)".
+    Returns (List[int], List[Decimal]) based on the edited DataFrame.
     """
     df = pd.DataFrame(
         {
@@ -169,8 +137,11 @@ def edit_trigger_quantity_table(
 
 def render_buy_funding_block(key_prefix: str, prev_block: dict):
     """
-    Renders “Buy‐Funding Source” radio + conditional ticker/proportion table.
-    Returns either {"type": "cash"} or {"type": "sell", "sources": [ ... ]}.
+    Renders the "Buy‐Funding Source" radio + conditional ticker/proportion table.
+    Returns:
+      { "type": "cash" }
+      OR
+      { "type": "sell", "sources": [ {"ticker": str, "proportion": Decimal}, … ] }
     """
     prev_type = prev_block.get("type", "cash")
     st.write("**Buy‐Funding Source**")
@@ -224,8 +195,11 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
 
 def render_sell_realloc_block(key_prefix: str, prev_block: dict):
     """
-    Renders “Sell‐Proceeds Re‐Allocation” radio + conditional ticker/proportion table.
-    Returns either {"enabled": False} or {"enabled": True, "targets": [ ... ]}.
+    Renders the "Sell‐Proceeds Re‐Allocation" radio + conditional ticker/proportion table.
+    Returns:
+      { "enabled": False }
+      OR
+      { "enabled": True, "targets": [ {"ticker": str, "proportion": Decimal}, … ] }
     """
     enabled = prev_block.get("enabled", False)
     st.write("**Sell‐Proceeds Re‐Allocation**")
@@ -275,6 +249,35 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
         result["targets"] = targets
 
     return result
+
+
+def fetch_twitter_config(user_id: str) -> dict:
+    """
+    Read twitter_config from Users table. Return defaults if missing.
+    """
+    item = get_user_item(user_id)
+    if not item:
+        return {"enabled": False, "handle": ""}
+    return item.get("twitter_config", {"enabled": False, "handle": ""})
+
+
+def update_twitter_config(user_id: str, enabled: bool, handle: str) -> bool:
+    """
+    Write twitter_config = {enabled: <bool>, handle: <str>} back to Users.
+    """
+    tc = {"enabled": enabled, "handle": handle}
+    try:
+        table.update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="SET twitter_config = :t",
+            ExpressionAttributeValues={":t": tc},
+        )
+        return True
+    except ClientError as e:
+        st.error(
+            f"Failed to update X trading settings: {e.response['Error']['Message']}"
+        )
+        return False
 
 
 # ─── STREAMLIT APP LAYOUT ─────────────────────────────────────────────────────
