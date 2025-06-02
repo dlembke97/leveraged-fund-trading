@@ -104,8 +104,13 @@ def get_current_price(
             symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
         )
         minute_bars = data_client.get_stock_bars(bars_req)
-        if symbol in minute_bars and minute_bars[symbol]:
-            return minute_bars[symbol][0].close
+        # minute_bars.data is the actual dict mapping symbol → list[Bar]
+        if (
+            hasattr(minute_bars, "data")
+            and symbol in minute_bars.data
+            and minute_bars.data[symbol]
+        ):
+            return minute_bars.data[symbol][0].close
     except Exception:
         logger.warning(
             f"Could not fetch minute bars for {symbol} (403 or no data); falling back to daily."
@@ -122,8 +127,12 @@ def get_current_price(
             limit=1,
         )
         daily_bars = data_client.get_stock_bars(bars_req)
-        if symbol in daily_bars and daily_bars[symbol]:
-            return daily_bars[symbol][0].close
+        if (
+            hasattr(daily_bars, "data")
+            and symbol in daily_bars.data
+            and daily_bars.data[symbol]
+        ):
+            return daily_bars.data[symbol][0].close
     except Exception:
         logger.warning(f"Could not fetch daily bar for {symbol} (no data).")
 
