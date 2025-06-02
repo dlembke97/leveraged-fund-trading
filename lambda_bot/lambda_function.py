@@ -353,26 +353,25 @@ def one_cycle(
 ) -> dict:
     """
     Executes one iteration of buy/sell logic for every symbol in `config`.
-    - If consider_long_vs_short_term_gains = False: use the original SELL logic.
-    - If True: use allocate_and_execute_sells(...) instead.
-    Returns the updated `config`.
+    Now each `cfg` is the per‐symbol dict, so we set defaults inside this loop.
     """
     for symbol, cfg in config.items():
-        price = get_current_price(data_client, symbol)
-        if price is None:
-            continue
-
-        # Ensure defaults for new fields
+        # ─── ENSURE per‐ticker defaults ─────────────────────────────────
+        cfg.setdefault("triggered_buy_levels", set(cfg.get("triggered_buy_levels", [])))
         cfg.setdefault(
             "triggered_sell_levels", set(cfg.get("triggered_sell_levels", []))
         )
-        cfg.setdefault("triggered_buy_levels", set(cfg.get("triggered_buy_levels", [])))
         cfg.setdefault("consider_long_vs_short_term_gains", False)
         cfg.setdefault("initial_lots", cfg.get("initial_lots", []))
         cfg.setdefault("positions", cfg.get("positions", []))
         cfg.setdefault("sell_notional", cfg.get("sell_notional", DEFAULT_NOTIONAL))
 
-        # ─── SELL logic ─────────────────────────────────────
+        # ─── Fetch current price ────────────────────────────────────────
+        price = get_current_price(data_client, symbol)
+        if price is None:
+            continue
+
+        # ─── SELL logic ────────────────────────────────────────────────
         sell_pairs = sorted(
             zip(cfg.get("sell_triggers", []), cfg.get("sell_quantities", [])),
             key=lambda pair: pair[0],
@@ -380,19 +379,17 @@ def one_cycle(
         for trigger, qty_decimal in sell_pairs:
             if price >= trigger and trigger not in cfg["triggered_sell_levels"]:
                 if cfg["consider_long_vs_short_term_gains"]:
-                    # Lot-aware sell
-                    # Ensure sell_notional is set from sell_quantities if not overridden
+                    # Lot‐aware sell
                     cfg["sell_notional"] = qty_decimal
                     allocate_and_execute_sells(
                         trading_client, symbol, cfg, email_mgr, price
                     )
-                    # Mark trigger as fired
                     cfg["triggered_sell_levels"].add(trigger)
                 else:
-                    # Original notional-based sell
+                    # Original notional‐based sell
                     order_request = MarketOrderRequest(
                         symbol=symbol,
-                        notional=str(qty_decimal),  # dollar amount
+                        notional=str(qty_decimal),
                         side=OrderSide.SELL,
                         type=OrderType.MARKET,
                         time_in_force=TimeInForce.DAY,
@@ -442,7 +439,7 @@ def one_cycle(
                                     )
                 break  # only one triggered sell per cycle
 
-        # ─── BUY logic ──────────────────────────────────────
+        # ─── BUY logic ─────────────────────────────────────────────────
         buy_pairs = sorted(
             zip(cfg.get("buy_triggers", []), cfg.get("buy_quantities", [])),
             key=lambda pair: pair[0],
@@ -543,10 +540,10 @@ def lambda_handler(event, context):
         logger.info(f"Processing user {user_id}")
 
         try:
-            # 1) Decrypt credentials
+            # ─── DECRYPT CREDENTIALS ─────────────────────────────────
             alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
 
-            # 2) Instantiate alpaca-py clients
+            # ─── INSTANTIATE alpaca-py CLIENTS ───────────────────────
             trading_client = TradingClient(
                 alpaca_api_key, alpaca_api_secret, paper=True
             )
@@ -558,33 +555,20 @@ def lambda_handler(event, context):
                 sender_password=SENDER_EMAIL_PASSWORD,
             )
 
-            # 3) Ensure sets/lists exist
+            # ─── FETCH & PREPARE PER‐USER TRADING CONFIG ─────────────
             trading_cfg = u.get("trading_config", {})
-            trading_cfg.setdefault(
-                "triggered_buy_levels", set(trading_cfg.get("triggered_buy_levels", []))
-            )
-            trading_cfg.setdefault(
-                "triggered_sell_levels",
-                set(trading_cfg.get("triggered_sell_levels", [])),
-            )
-            trading_cfg.setdefault("consider_long_vs_short_term_gains", False)
-            trading_cfg.setdefault("initial_lots", trading_cfg.get("initial_lots", []))
-            trading_cfg.setdefault("positions", trading_cfg.get("positions", []))
-            trading_cfg.setdefault(
-                "sell_notional", trading_cfg.get("sell_notional", DEFAULT_NOTIONAL)
-            )
 
-            # 4) Run one cycle for this user
+            # ─── RUN ONE CYCLE OF TRADING LOGIC ─────────────────────
             updated_cfg = one_cycle(trading_client, data_client, trading_cfg, email_mgr)
 
-            # 5) Persist changes (convert sets back to lists)
-            updated_cfg["triggered_buy_levels"] = list(
-                updated_cfg.get("triggered_buy_levels", [])
-            )
-            updated_cfg["triggered_sell_levels"] = list(
-                updated_cfg.get("triggered_sell_levels", [])
-            )
+            # ─── CONVERT per‐ticker sets back to lists ───────────────
+            for symbol, cfg in updated_cfg.items():
+                if isinstance(cfg.get("triggered_buy_levels"), set):
+                    cfg["triggered_buy_levels"] = list(cfg["triggered_buy_levels"])
+                if isinstance(cfg.get("triggered_sell_levels"), set):
+                    cfg["triggered_sell_levels"] = list(cfg["triggered_sell_levels"])
 
+            # ─── PERSIST CHANGES TO DYNAMODB ────────────────────────
             table.update_item(
                 Key={"user_id": user_id},
                 UpdateExpression="SET trading_config = :cfg",
@@ -592,7 +576,7 @@ def lambda_handler(event, context):
             )
 
         except Exception as e:
-            # Log the error and continue with the next user
+            # Log and continue to next user
             logger.error(f"Error for user {user_id}: {e}", exc_info=True)
             continue
 
