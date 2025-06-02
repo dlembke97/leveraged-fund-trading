@@ -546,6 +546,9 @@ def lambda_handler(event, context):
 
     for u in users:
         user_id = u.get("user_id")
+        # NOTE Temp code until other users have real alpaca creds
+        if u.get("user_id") != "David_L":
+            continue
         logger.info(f"Processing user {user_id}")
 
         try:
