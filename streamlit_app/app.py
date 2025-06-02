@@ -103,14 +103,14 @@ def update_trading_config(user_id: str, config: dict) -> bool:
 # ─── NEW HELPERS FOR X TRADING ─────────────────────────────────────────────────
 
 
-def fetch_twitter_config(user_id: str) -> list[str]:
+def fetch_twitter_config(user_id: str) -> dict:
     """
-    Read twitter_config from Users table. Return a list of handles (or [] if missing).
+    Read twitter_config from Users table. Return defaults if missing.
     """
     item = get_user_item(user_id)
     if not item:
-        return []
-    return item.get("twitter_config", {}).get("handles", [])
+        return {"enabled": False, "handles": []}
+    return item.get("twitter_config", {"enabled": False, "handles": []})
 
 
 def update_twitter_config(user_id: str, handles: list[str]) -> bool:
@@ -565,16 +565,23 @@ with tabs[0]:
         with subtab2:
             st.info("Enter one or more Twitter handles (comma-separated).")
 
-            # 1) Load existing twitter_config (a list of handles)
-            existing_handles = fetch_twitter_config(user_id)
-            handles_str = ", ".join(existing_handles) if existing_handles else ""
+            # 1) Load existing twitter_config
+            twitter_cfg = fetch_twitter_config(user_id)
+            existing_enabled = twitter_cfg.get("enabled", False)
+            existing_handles = twitter_cfg.get("handles", [])
 
             # 2) Text input for comma-separated handles
             handles_input = st.text_input(
                 "Twitter Handles (comma-separated, no '@')",
-                value=handles_str,
+                value=existing_handles,
                 key="x_handles_input",
                 help="e.g. CryptoGuru42, MarketSignalsBot",
+            )
+
+            enabled = st.checkbox(
+                "Enable X trading signals",
+                value=existing_enabled,
+                key="x_enable_checkbox",
             )
 
             # Convert to a list of lowercase handles (strip whitespace)
@@ -643,7 +650,10 @@ with tabs[1]:
                     "encrypted_alpaca_secret": "",
                     "receiver_email": "",
                     "trading_config": {},
-                    "twitter_config": {"handles": []},  # initialize empty
+                    "twitter_config": {  # initialize empty
+                        "enabled": False,
+                        "handles": [],
+                    },
                 }
                 try:
                     table.put_item(Item=item)
