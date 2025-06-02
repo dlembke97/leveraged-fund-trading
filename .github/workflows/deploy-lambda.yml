@@ -3,19 +3,17 @@ name: Build & Deploy Trading Lambdas
 on:
   push:
     paths:
-      # NOTE: Eventually should only run on merges to main. 
-      # For now will leave as any branch because no dev environment setup in AWS
-      # 1. Trigger when this workflow file is modified:
       - '.github/workflows/deploy-lambda.yml'
-      # 2. Trigger when anything in lambda_bot/ changes:
       - 'lambda_bot/**'
+      - 'lambda_bot_twitter_scaper/**'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      FUNCTION_NAME:           ${{ secrets.LAMBDA_FUNCTION_NAME }}
-      LAYER_BUCKET:            ${{ secrets.LAYER_S3_BUCKET }}
+      FUNCTION_NAME:             ${{ secrets.LAMBDA_FUNCTION_NAME }}
+      TWITTER_FUNCTION_NAME:     ${{ secrets.TWITTER_LAMBDA_FUNCTION_NAME }}
+      LAYER_BUCKET:              ${{ secrets.LAYER_S3_BUCKET }}
 
     steps:
       - name: Checkout repository
@@ -33,14 +31,13 @@ jobs:
         with:
           python-version: '3.11.9'
 
-      # ─── Layer build & publish ────────────────────────────────────────────────────
+      # ─── Layer: trading-bot-deps (cryptography, bcrypt, alpaca-py, pandas_market_calendars) ───
 
-      - name: Install layer dependencies (build on Amazon Linux 2)
+      - name: Install trading-bot-deps layer dependencies (Amazon Linux 2)
         run: |
           python -m pip install --upgrade pip
           mkdir -p layer/python
 
-          # Install & clean up ALL inside the container, so host never touches root-owned files
           docker run --rm \
             -v "${{ github.workspace }}/layer/python":/opt/python \
             public.ecr.aws/sam/build-python3.11:latest \
@@ -54,29 +51,70 @@ jobs:
               && find /opt/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
             "
 
-      - name: Package Lambda layer
+      - name: Package trading-bot-deps layer
         run: |
           cd layer
           zip -r ../layer.zip python
 
-      - name: Upload layer.zip to S3
-        run: aws s3 cp layer.zip s3://$LAYER_BUCKET/layer.zip
+      - name: Upload trading layer.zip to S3
+        run: aws s3 cp layer.zip s3://$LAYER_BUCKET/trading_layer.zip
 
-      - name: Publish new Lambda layer version from S3
-        id: publish_layer
+      - name: Publish new trading-bot-deps Lambda layer version
+        id: publish_trading_layer
         run: |
           LAYER_ARN=$(aws lambda publish-layer-version \
             --layer-name trading-bot-deps \
             --description "Dependencies for trading bot (alpaca + market cal)" \
             --license-info "MIT" \
-            --content S3Bucket=$LAYER_BUCKET,S3Key=layer.zip \
+            --content S3Bucket=$LAYER_BUCKET,S3Key=trading_layer.zip \
             --compatible-runtimes python3.11 \
             --output text \
             --query LayerVersionArn)
-          echo "layerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
+          echo "tradingLayerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
 
-      - name: Show published Layer ARN
-        run: echo "→ ${{ steps.publish_layer.outputs.layerArn }}"
+      - name: Show published Trading Layer ARN
+        run: echo "→ ${{ steps.publish_trading_layer.outputs.tradingLayerArn }}"
+
+      # ─── Layer: twitter-scraper-deps (requests) ─────────────────────────────────────
+
+      - name: Install twitter-scraper-deps layer dependencies (Amazon Linux 2)
+        run: |
+          python -m pip install --upgrade pip
+          mkdir -p layer_twitter/python
+
+          docker run --rm \
+            -v "${{ github.workspace }}/layer_twitter/python":/opt/python \
+            public.ecr.aws/sam/build-python3.11:latest \
+            /bin/bash -c "
+              pip install --no-cache-dir \
+                requests \
+                -t /opt/python \
+              && find /opt/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
+            "
+
+      - name: Package twitter-scraper-deps layer
+        run: |
+          cd layer_twitter
+          zip -r ../twitter_layer.zip python
+
+      - name: Upload twitter layer.zip to S3
+        run: aws s3 cp twitter_layer.zip s3://$LAYER_BUCKET/twitter_layer.zip
+
+      - name: Publish new twitter-scraper-deps Lambda layer version
+        id: publish_twitter_layer
+        run: |
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name twitter-scraper-deps \
+            --description "Dependencies for twitter scraper (requests)" \
+            --license-info "MIT" \
+            --content S3Bucket=$LAYER_BUCKET,S3Key=twitter_layer.zip \
+            --compatible-runtimes python3.11 \
+            --output text \
+            --query LayerVersionArn)
+          echo "twitterLayerArn=$LAYER_ARN" >> $GITHUB_OUTPUT
+
+      - name: Show published Twitter Layer ARN
+        run: echo "→ ${{ steps.publish_twitter_layer.outputs.twitterLayerArn }}"
 
       # ─── Trading Lambda packaging & deploy ────────────────────────────────────────
 
@@ -92,11 +130,11 @@ jobs:
       - name: Wait for Trading function to be Active
         run: aws lambda wait function-active --function-name $FUNCTION_NAME
 
-      - name: Attach layer & handler to Trading Lambda (with retry)
+      - name: Attach Trading Layer & handler to Trading Lambda (with retry)
         run: |
-          LAYER_ARN=${{ steps.publish_layer.outputs.layerArn }}
+          LAYER_ARN=${{ steps.publish_trading_layer.outputs.tradingLayerArn }}
           for i in {1..6}; do
-            echo "Attempt $i to update Trading configuration..."
+            echo "Attempt $i to update Trading Lambda configuration..."
             if aws lambda update-function-configuration \
                  --function-name $FUNCTION_NAME \
                  --handler lambda_bot.lambda_function.lambda_handler \
@@ -104,7 +142,40 @@ jobs:
               echo "✔ Trading Lambda config updated."
               break
             else
-              echo "⚠️ Conflict updating Trading—retrying in 10s..."
+              echo "⚠️ Conflict updating Trading Lambda—retrying in 10s..."
+              sleep 10
+            fi
+          done
+
+      # ─── Twitter Scraper Lambda packaging & deploy ────────────────────────────────
+
+      - name: Package Twitter Scraper Lambda function code
+        run: |
+          cd lambda_bot_twitter_scaper
+          zip -r ../twitter_function.zip .
+
+      - name: Update Twitter Scraper Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name $TWITTER_FUNCTION_NAME \
+            --zip-file fileb://twitter_function.zip
+
+      - name: Wait for Twitter Scraper function to be Active
+        run: aws lambda wait function-active --function-name $TWITTER_FUNCTION_NAME
+
+      - name: Attach Twitter Layer & handler to Twitter Scraper Lambda (with retry)
+        run: |
+          LAYER_ARN=${{ steps.publish_twitter_layer.outputs.twitterLayerArn }}
+          for i in {1..6}; do
+            echo "Attempt $i to update Twitter Scraper Lambda configuration..."
+            if aws lambda update-function-configuration \
+                 --function-name $TWITTER_FUNCTION_NAME \
+                 --handler lambda_function.lambda_handler \
+                 --layers "$LAYER_ARN"; then
+              echo "✔ Twitter Scraper Lambda config updated."
+              break
+            else
+              echo "⚠️ Conflict updating Twitter Scraper Lambda—retrying in 10s..."
               sleep 10
             fi
           done
