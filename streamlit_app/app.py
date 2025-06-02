@@ -569,11 +569,11 @@ with tabs[0]:
             twitter_cfg = fetch_twitter_config(user_id)
             existing_enabled = twitter_cfg.get("enabled", False)
             existing_handles = twitter_cfg.get("handles", [])
-
+            handle_values = ", ".join(existing_handles) if existing_handles else ""
             # 2) Text input for comma-separated handles
             handles_input = st.text_input(
                 "Twitter Handles (comma-separated, no '@')",
-                value=existing_handles,
+                value=handle_values,
                 key="x_handles_input",
                 help="e.g. CryptoGuru42, MarketSignalsBot",
             )
