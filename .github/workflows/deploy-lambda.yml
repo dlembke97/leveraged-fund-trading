@@ -150,9 +150,7 @@ jobs:
       # ─── Twitter Scraper Lambda packaging & deploy ────────────────────────────────
 
       - name: Package Twitter Scraper Lambda function code
-        run: |
-          cd lambda_bot_twitter_scaper
-          zip -r ../twitter_function.zip .
+        run: zip -r twitter_function.zip lambda_bot_twitter_scaper
 
       - name: Update Twitter Scraper Lambda function code
         run: |
