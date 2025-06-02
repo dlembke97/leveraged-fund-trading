@@ -105,19 +105,19 @@ def update_trading_config(user_id: str, config: dict) -> bool:
 
 def fetch_twitter_config(user_id: str) -> dict:
     """
-    Read twitter_config from Users table. Return defaults if missing.
+    Read twitter_config from Users table. Return a dict with 'handles' list and 'enabled' bool.
     """
     item = get_user_item(user_id)
     if not item:
-        return {"enabled": False, "handles": []}
-    return item.get("twitter_config", {"enabled": False, "handles": []})
+        return {"handles": [], "enabled": False}
+    return item.get("twitter_config", {"handles": [], "enabled": False})
 
 
-def update_twitter_config(user_id: str, handles: list[str]) -> bool:
+def update_twitter_config(user_id: str, handles: list[str], enabled: bool) -> bool:
     """
-    Write twitter_config = {"handles": [ ... ]} back to Users.
+    Write twitter_config = {"handles": handles, "enabled": enabled} back to Users.
     """
-    tc = {"handles": handles}
+    tc = {"handles": handles, "enabled": enabled}
     try:
         table.update_item(
             Key={"user_id": user_id},
@@ -563,35 +563,38 @@ with tabs[0]:
 
         # ── Subtab 2: X (Twitter) Trading ────────────────────────────────────
         with subtab2:
-            st.info("Enter one or more Twitter handles (comma-separated).")
+            st.info(
+                "Enter one or more Twitter handles, then optionally enable or disable scraping."
+            )
 
-            # 1) Load existing twitter_config
+            # 1) Load existing twitter_config (handles list + enabled flag)
             twitter_cfg = fetch_twitter_config(user_id)
-            existing_enabled = twitter_cfg.get("enabled", False)
             existing_handles = twitter_cfg.get("handles", [])
-            handle_values = ", ".join(existing_handles) if existing_handles else ""
-            # 2) Text input for comma-separated handles
+            existing_enabled = twitter_cfg.get("enabled", False)
+
+            handles_str = ", ".join(existing_handles) if existing_handles else ""
             handles_input = st.text_input(
                 "Twitter Handles (comma-separated, no '@')",
-                value=handle_values,
+                value=handles_str,
                 key="x_handles_input",
                 help="e.g. CryptoGuru42, MarketSignalsBot",
             )
 
+            # Convert to a list of handles (strip whitespace)
+            handles_list = [h.strip() for h in handles_input.split(",") if h.strip()]
+
+            # 2) Enable/disable checkbox (below the input)
             enabled = st.checkbox(
                 "Enable X trading signals",
                 value=existing_enabled,
                 key="x_enable_checkbox",
             )
 
-            # Convert to a list of lowercase handles (strip whitespace)
-            handles_list = [h.strip() for h in handles_input.split(",") if h.strip()]
-
-            # 3) Save X Trading Settings button
+            # 3) Save X-Trading Settings button
             if st.button("Save X-Trading Settings"):
-                # Even if handles_list is empty, we simply store [] → disabled in Lambda
-                if update_twitter_config(user_id, handles_list):
-                    st.success("X-Trading handles saved!")
+                # Always save both handles_list and enabled flag
+                if update_twitter_config(user_id, handles_list, enabled):
+                    st.success("X-Trading settings saved!")
 
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
@@ -651,8 +654,8 @@ with tabs[1]:
                     "receiver_email": "",
                     "trading_config": {},
                     "twitter_config": {  # initialize empty
-                        "enabled": False,
                         "handles": [],
+                        "enabled": False,
                     },
                 }
                 try:
