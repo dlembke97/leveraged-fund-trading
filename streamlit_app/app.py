@@ -100,12 +100,44 @@ def update_trading_config(user_id: str, config: dict) -> bool:
         return False
 
 
+# ─── NEW HELPERS FOR X TRADING ─────────────────────────────────────────────────
+
+
+def fetch_twitter_config(user_id: str) -> dict:
+    """
+    Read twitter_config from Users table. Return defaults if missing.
+    """
+    item = get_user_item(user_id)
+    if not item:
+        return {"enabled": False, "handle": ""}
+    return item.get("twitter_config", {"enabled": False, "handle": ""})
+
+
+def update_twitter_config(user_id: str, enabled: bool, handle: str) -> bool:
+    """
+    Write twitter_config = {enabled: <bool>, handle: <str>} back to Users.
+    """
+    tc = {"enabled": enabled, "handle": handle}
+    try:
+        table.update_item(
+            Key={"user_id": user_id},
+            UpdateExpression="SET twitter_config = :t",
+            ExpressionAttributeValues={":t": tc},
+        )
+        return True
+    except ClientError as e:
+        st.error(
+            f"Failed to update X trading settings: {e.response['Error']['Message']}"
+        )
+        return False
+
+
 def edit_trigger_quantity_table(
     key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None
 ):
     """
-    Renders a two‐column data_editor labelled "Trigger" and "Quantity (USD)".
-    Returns (List[int], List[Decimal]) based on the edited DataFrame.
+    Renders a two‐column data_editor labelled “Trigger” and “Quantity (USD)”.
+    Returns: (List[int], List[Decimal]) based on edited DataFrame.
     """
     df = pd.DataFrame(
         {
@@ -137,11 +169,8 @@ def edit_trigger_quantity_table(
 
 def render_buy_funding_block(key_prefix: str, prev_block: dict):
     """
-    Renders the "Buy‐Funding Source" radio + conditional ticker/proportion table.
-    Returns:
-      { "type": "cash" }
-      OR
-      { "type": "sell", "sources": [ {"ticker": str, "proportion": Decimal}, … ] }
+    Renders “Buy‐Funding Source” radio + conditional ticker/proportion table.
+    Returns either {"type": "cash"} or {"type": "sell", "sources": [ ... ]}.
     """
     prev_type = prev_block.get("type", "cash")
     st.write("**Buy‐Funding Source**")
@@ -195,11 +224,8 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
 
 def render_sell_realloc_block(key_prefix: str, prev_block: dict):
     """
-    Renders the "Sell‐Proceeds Re‐Allocation" radio + conditional ticker/proportion table.
-    Returns:
-      { "enabled": False }
-      OR
-      { "enabled": True, "targets": [ {"ticker": str, "proportion": Decimal}, … ] }
+    Renders “Sell‐Proceeds Re‐Allocation” radio + conditional ticker/proportion table.
+    Returns either {"enabled": False} or {"enabled": True, "targets": [ ... ]}.
     """
     enabled = prev_block.get("enabled", False)
     st.write("**Sell‐Proceeds Re‐Allocation**")
@@ -249,35 +275,6 @@ def render_sell_realloc_block(key_prefix: str, prev_block: dict):
         result["targets"] = targets
 
     return result
-
-
-def fetch_twitter_config(user_id: str) -> dict:
-    """
-    Read twitter_config from Users table. Return defaults if missing.
-    """
-    item = get_user_item(user_id)
-    if not item:
-        return {"enabled": False, "handle": ""}
-    return item.get("twitter_config", {"enabled": False, "handle": ""})
-
-
-def update_twitter_config(user_id: str, enabled: bool, handle: str) -> bool:
-    """
-    Write twitter_config = {enabled: <bool>, handle: <str>} back to Users.
-    """
-    tc = {"enabled": enabled, "handle": handle}
-    try:
-        table.update_item(
-            Key={"user_id": user_id},
-            UpdateExpression="SET twitter_config = :t",
-            ExpressionAttributeValues={":t": tc},
-        )
-        return True
-    except ClientError as e:
-        st.error(
-            f"Failed to update X trading settings: {e.response['Error']['Message']}"
-        )
-        return False
 
 
 # ─── STREAMLIT APP LAYOUT ─────────────────────────────────────────────────────
@@ -475,91 +472,131 @@ with tabs[0]:
                 st.session_state["show_update_credentials"] = False
                 st.rerun()
 
-        # ── TRADING CONFIGURATION SECTION ──────────────────────────────────────
+        # ── TRADING CONFIGURATION SECTION WITH SUBTABS ────────────────────────
         st.markdown("---")
-        st.header("Threshold Based Trading Configuration")
-        st.info(
-            "Note that all tables below are editable. Simply double click into any cell to overwrite a given value. These work similar to excel, where you can copy and past multiple selected cells, or even drag the bottom right corner of a cell to copy it down. New rows can be added to each table as well by clicking the empty bottom cell of a given table"
-        )
-        existing_config = item.get("trading_config", {})
+        st.header("Trading Selections")
 
-        # Let user add/remove tickers in one line
-        existing_tickers = list(existing_config.keys())
-        ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
-        tickers_str = st.text_input(
-            "Tickers (Enter tickers here comma-separated, e.g. TQQQ, SPY)",
-            value=ticker_values,
-            help="When you click out of the cell, fillable configs will generate for each ticker you entered",
-            key="tc_tickers_str",
-        )
+        # Create two subtabs under “Trading Selections”
+        subtab1, subtab2 = st.tabs(["Threshold Based Trading", "X (Twitter) Trading"])
 
-        tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
+        # ── Subtab 1: Threshold Based Trading ───────────────────────────────
+        with subtab1:
+            st.info(
+                "Note: Double‐click into any cell to edit. New rows can be added by selecting the bottom empty row."
+            )
+            existing_config = item.get("trading_config", {})
 
-        new_trading_config = {}
-
-        for ticker in tickers:
-            st.markdown(f"### {ticker} configuration")
-            prev = existing_config.get(ticker, {})
-
-            # 1) Buy Levels & Quantities
-            buy_trigs, buy_qs = edit_trigger_quantity_table(
-                key_prefix=f"buy_{ticker}",
-                prev_triggers=prev.get("buy_triggers", []),
-                prev_quantities=prev.get("buy_quantities", []),
-                table_title=f"{ticker} Buy Thresholds/Dollar Amounts",
+            # Let user add/remove tickers in one input
+            existing_tickers = list(existing_config.keys())
+            ticker_values = ", ".join(existing_tickers) if existing_tickers else ""
+            tickers_str = st.text_input(
+                "Tickers (comma-separated, e.g. TQQQ, SPY)",
+                value=ticker_values,
+                help="After entering tickers, configurations will appear below for each.",
+                key="tc_tickers_str",
             )
 
-            # 2) Buy‐Funding Source
-            buy_fund = render_buy_funding_block(
-                key_prefix=f"buyfund_{ticker}",
-                prev_block=prev.get("buy_funding", {"type": "cash"}),
+            tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
+
+            new_trading_config = {}
+            for ticker in tickers:
+                st.markdown(f"### {ticker} Configuration")
+                prev = existing_config.get(ticker, {})
+
+                # 1) Buy Levels & Quantities
+                buy_trigs, buy_qs = edit_trigger_quantity_table(
+                    key_prefix=f"buy_{ticker}",
+                    prev_triggers=prev.get("buy_triggers", []),
+                    prev_quantities=prev.get("buy_quantities", []),
+                    table_title=f"{ticker} Buy Thresholds / Dollar Amounts",
+                )
+
+                # 2) Buy-Funding Source
+                buy_fund = render_buy_funding_block(
+                    key_prefix=f"buyfund_{ticker}",
+                    prev_block=prev.get("buy_funding", {"type": "cash"}),
+                )
+
+                # 3) Sell Levels & Quantities
+                sell_trigs, sell_qs = edit_trigger_quantity_table(
+                    key_prefix=f"sell_{ticker}",
+                    prev_triggers=prev.get("sell_triggers", []),
+                    prev_quantities=prev.get("sell_quantities", []),
+                    table_title=f"{ticker} Sell Thresholds / Dollar Amounts",
+                )
+
+                # 4) Sell-Proceeds Re-Allocation
+                sell_realloc = render_sell_realloc_block(
+                    key_prefix=f"sellrealloc_{ticker}",
+                    prev_block=prev.get("sell_reallocate", {"enabled": False}),
+                )
+
+                # 5) Consider Long vs Short Term Gains?
+                consider_ltcg = st.checkbox(
+                    "Consider Long vs Short Term Capital Gains",
+                    help="If enabled, the bot may skip a trade if it would trigger short-term capital gains within the buffer window.",
+                    value=prev.get("consider_long_vs_short_term_gains", False),
+                    key=f"ltcg_{ticker}",
+                )
+
+                # 6) Build per-ticker dictionary
+                new_trading_config[ticker] = {
+                    "buy_triggers": buy_trigs,
+                    "buy_quantities": buy_qs,
+                    "buy_funding": buy_fund,
+                    "sell_triggers": sell_trigs,
+                    "sell_quantities": sell_qs,
+                    "sell_reallocate": sell_realloc,
+                    "consider_long_vs_short_term_gains": consider_ltcg,
+                    "last_buy_price": prev.get("last_buy_price"),
+                    "last_sell_price": prev.get("last_sell_price"),
+                    "triggered_buy_levels": prev.get("triggered_buy_levels", []),
+                    "triggered_sell_levels": prev.get("triggered_sell_levels", []),
+                }
+
+                st.markdown("---")
+
+            if st.button("Save Trading Configuration"):
+                if not tickers:
+                    st.error("Please specify at least one ticker.")
+                else:
+                    if update_trading_config(user_id, new_trading_config):
+                        st.success("Threshold-based trading config updated!")
+
+        # ── Subtab 2: X (Twitter) Trading ────────────────────────────────────
+        with subtab2:
+            st.info("Enable and configure X (Twitter)-based signals here.")
+
+            # 1) Load existing twitter_config
+            twitter_cfg = fetch_twitter_config(user_id)
+            existing_enabled = twitter_cfg.get("enabled", False)
+            existing_handle = twitter_cfg.get("handle", "")
+
+            # 2) Checkbox to enable/disable
+            enabled = st.checkbox(
+                "Enable X trading signals",
+                value=existing_enabled,
+                key="x_enable_checkbox",
             )
 
-            # 3) Sell Levels & Quantities
-            sell_trigs, sell_qs = edit_trigger_quantity_table(
-                key_prefix=f"sell_{ticker}",
-                prev_triggers=prev.get("sell_triggers", []),
-                prev_quantities=prev.get("sell_quantities", []),
-                table_title=f"{ticker} Sell Thresholds/Dollar Amounts",
-            )
+            # 3) If enabled, show a text_input for handle
+            handle = ""
+            if enabled:
+                handle = st.text_input(
+                    "X handle (no '@')",
+                    value=existing_handle,
+                    key="x_handle_input",
+                    help="Enter the public X username you want to track (e.g. CryptoGuru42).",
+                )
 
-            # 4) Sell‐Proceeds Re‐Allocation
-            sell_realloc = render_sell_realloc_block(
-                key_prefix=f"sellrealloc_{ticker}",
-                prev_block=prev.get("sell_reallocate", {"enabled": False}),
-            )
+            # 4) Save X Trading Settings button
+            if st.button("Save X-Trading Settings"):
+                if enabled and not handle:
+                    st.error("Please enter a valid X handle when enabling X trading.")
+                else:
+                    if update_twitter_config(user_id, enabled, handle.strip()):
+                        st.success("X Trading settings saved!")
 
-            # 5) Consider Long vs Short Term Capital Gains?
-            consider_ltcg = st.checkbox(
-                "Consider Long vs Short Term Capital Gains",
-                help="If set to true, the bot may decide not to trade even if a threshold is it. For example, say that a buy on TQQQ is triggered and the funds for buying will be obtained by selling VTI. All of the VTI funds are currently short term capital gains but in 1 week they will be long term. The bot will likely determine that VTI should not be sold yet and will not make the trade. An email notification of this event will still be sent",
-                value=prev.get("consider_long_vs_short_term_gains", False),
-                key=f"ltcg_{ticker}",
-            )
-
-            # 6) Build per‐ticker dictionary
-            new_trading_config[ticker] = {
-                "buy_triggers": buy_trigs,
-                "buy_quantities": buy_qs,
-                "buy_funding": buy_fund,
-                "sell_triggers": sell_trigs,
-                "sell_quantities": sell_qs,
-                "sell_reallocate": sell_realloc,
-                "consider_long_vs_short_term_gains": consider_ltcg,
-                "last_buy_price": prev.get("last_buy_price"),
-                "last_sell_price": prev.get("last_sell_price"),
-                "triggered_buy_levels": prev.get("triggered_buy_levels", []),
-                "triggered_sell_levels": prev.get("triggered_sell_levels", []),
-            }
-
-            st.markdown("---")
-
-        if st.button("Save Trading Configuration"):
-            if not tickers:
-                st.error("Please specify at least one ticker.")
-            else:
-                if update_trading_config(user_id, new_trading_config):
-                    st.success("Trading configuration updated!")
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
 with tabs[1]:
@@ -617,6 +654,10 @@ with tabs[1]:
                     "encrypted_alpaca_secret": "",
                     "receiver_email": "",
                     "trading_config": {},
+                    "twitter_config": {  # initialize empty
+                        "enabled": False,
+                        "handle": "",
+                    },
                 }
                 try:
                     table.put_item(Item=item)
