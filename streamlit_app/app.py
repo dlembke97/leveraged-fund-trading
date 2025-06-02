@@ -103,21 +103,21 @@ def update_trading_config(user_id: str, config: dict) -> bool:
 # ─── NEW HELPERS FOR X TRADING ─────────────────────────────────────────────────
 
 
-def fetch_twitter_config(user_id: str) -> dict:
+def fetch_twitter_config(user_id: str) -> list[str]:
     """
-    Read twitter_config from Users table. Return defaults if missing.
+    Read twitter_config from Users table. Return a list of handles (or [] if missing).
     """
     item = get_user_item(user_id)
     if not item:
-        return {"enabled": False, "handle": ""}
-    return item.get("twitter_config", {"enabled": False, "handle": ""})
+        return []
+    return item.get("twitter_config", {}).get("handles", [])
 
 
-def update_twitter_config(user_id: str, enabled: bool, handle: str) -> bool:
+def update_twitter_config(user_id: str, handles: list[str]) -> bool:
     """
-    Write twitter_config = {enabled: <bool>, handle: <str>} back to Users.
+    Write twitter_config = {"handles": [ ... ]} back to Users.
     """
-    tc = {"enabled": enabled, "handle": handle}
+    tc = {"handles": handles}
     try:
         table.update_item(
             Key={"user_id": user_id},
@@ -126,9 +126,7 @@ def update_twitter_config(user_id: str, enabled: bool, handle: str) -> bool:
         )
         return True
     except ClientError as e:
-        st.error(
-            f"Failed to update X trading settings: {e.response['Error']['Message']}"
-        )
+        st.error(f"Failed to update Twitter settings: {e.response['Error']['Message']}")
         return False
 
 
@@ -136,8 +134,8 @@ def edit_trigger_quantity_table(
     key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None
 ):
     """
-    Renders a two‐column data_editor labelled “Trigger” and “Quantity (USD)”.
-    Returns: (List[int], List[Decimal]) based on edited DataFrame.
+    Renders a two-column data_editor labeled “Trigger” and “Quantity (USD)”.
+    Returns: (List[int], List[Decimal]) based on the edited DataFrame.
     """
     df = pd.DataFrame(
         {
@@ -169,11 +167,11 @@ def edit_trigger_quantity_table(
 
 def render_buy_funding_block(key_prefix: str, prev_block: dict):
     """
-    Renders “Buy‐Funding Source” radio + conditional ticker/proportion table.
+    Renders “Buy-Funding Source” radio + conditional ticker/proportion table.
     Returns either {"type": "cash"} or {"type": "sell", "sources": [ ... ]}.
     """
     prev_type = prev_block.get("type", "cash")
-    st.write("**Buy‐Funding Source**")
+    st.write("**Buy-Funding Source**")
     choice = st.radio(
         f"When a BUY triggers, use:",
         options=["Cash Balance", "Sell Other Ticker(s)"],
@@ -224,11 +222,11 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
 
 def render_sell_realloc_block(key_prefix: str, prev_block: dict):
     """
-    Renders “Sell‐Proceeds Re‐Allocation” radio + conditional ticker/proportion table.
+    Renders “Sell-Proceeds Re-Allocation” radio + conditional ticker/proportion table.
     Returns either {"enabled": False} or {"enabled": True, "targets": [ ... ]}.
     """
     enabled = prev_block.get("enabled", False)
-    st.write("**Sell‐Proceeds Re‐Allocation**")
+    st.write("**Sell-Proceeds Re-Allocation**")
     choice = st.radio(
         f"Reinvest Proceeds from triggered Sells?",
         options=["No (keep in cash)", "Yes (allocate to other tickers)"],
@@ -377,7 +375,7 @@ with tabs[0]:
                 st.session_state["show_change_pw"] = False
                 st.rerun()
 
-    # ── LOGGED‐IN USER DASHBOARD & CONFIG ───────────────────────────────────────
+    # ── LOGGED-IN USER DASHBOARD & CONFIG ───────────────────────────────────────
     else:
         user_id = st.session_state["logged_in_user"]
         item = get_user_item(user_id)
@@ -482,7 +480,7 @@ with tabs[0]:
         # ── Subtab 1: Threshold Based Trading ───────────────────────────────
         with subtab1:
             st.info(
-                "Note: Double‐click into any cell to edit. New rows can be added by selecting the bottom empty row."
+                "Note: Double-click any cell to edit. New rows can be added by selecting the bottom empty row."
             )
             existing_config = item.get("trading_config", {})
 
@@ -492,7 +490,7 @@ with tabs[0]:
             tickers_str = st.text_input(
                 "Tickers (comma-separated, e.g. TQQQ, SPY)",
                 value=ticker_values,
-                help="After entering tickers, configurations will appear below for each.",
+                help="After entering tickers, configuration tables will appear below for each.",
                 key="tc_tickers_str",
             )
 
@@ -565,37 +563,28 @@ with tabs[0]:
 
         # ── Subtab 2: X (Twitter) Trading ────────────────────────────────────
         with subtab2:
-            st.info("Enable and configure X (Twitter)-based signals here.")
+            st.info("Enter one or more Twitter handles (comma-separated).")
 
-            # 1) Load existing twitter_config
-            twitter_cfg = fetch_twitter_config(user_id)
-            existing_enabled = twitter_cfg.get("enabled", False)
-            existing_handle = twitter_cfg.get("handle", "")
+            # 1) Load existing twitter_config (a list of handles)
+            existing_handles = fetch_twitter_config(user_id)
+            handles_str = ", ".join(existing_handles) if existing_handles else ""
 
-            # 2) Checkbox to enable/disable
-            enabled = st.checkbox(
-                "Enable X trading signals",
-                value=existing_enabled,
-                key="x_enable_checkbox",
+            # 2) Text input for comma-separated handles
+            handles_input = st.text_input(
+                "Twitter Handles (comma-separated, no '@')",
+                value=handles_str,
+                key="x_handles_input",
+                help="e.g. CryptoGuru42, MarketSignalsBot",
             )
 
-            # 3) If enabled, show a text_input for handle
-            handle = ""
-            if enabled:
-                handle = st.text_input(
-                    "X handle (no '@')",
-                    value=existing_handle,
-                    key="x_handle_input",
-                    help="Enter the public X username you want to track (e.g. CryptoGuru42).",
-                )
+            # Convert to a list of lowercase handles (strip whitespace)
+            handles_list = [h.strip() for h in handles_input.split(",") if h.strip()]
 
-            # 4) Save X Trading Settings button
+            # 3) Save X Trading Settings button
             if st.button("Save X-Trading Settings"):
-                if enabled and not handle:
-                    st.error("Please enter a valid X handle when enabling X trading.")
-                else:
-                    if update_twitter_config(user_id, enabled, handle.strip()):
-                        st.success("X Trading settings saved!")
+                # Even if handles_list is empty, we simply store [] → disabled in Lambda
+                if update_twitter_config(user_id, handles_list):
+                    st.success("X-Trading handles saved!")
 
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
@@ -654,10 +643,7 @@ with tabs[1]:
                     "encrypted_alpaca_secret": "",
                     "receiver_email": "",
                     "trading_config": {},
-                    "twitter_config": {  # initialize empty
-                        "enabled": False,
-                        "handle": "",
-                    },
+                    "twitter_config": {"handles": []},  # initialize empty
                 }
                 try:
                     table.put_item(Item=item)
