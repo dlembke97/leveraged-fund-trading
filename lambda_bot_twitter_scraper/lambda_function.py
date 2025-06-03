@@ -9,9 +9,9 @@ from boto3.dynamodb.conditions import Attr
 USERS_TABLE = os.environ["USERS_TABLE"]  # e.g. "Users"
 STATE_TABLE = os.environ["STATE_TABLE"]  # "TweetState"
 SIGNALS_TABLE = os.environ["SIGNALS_TABLE"]  # "TweetSignals"
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-2")
+TWITTER_BEARER = os.environ["TWITTER_BEARER_TOKEN"]  # from Twitter Developer Portal
 
-ddb = boto3.resource("dynamodb", region_name=AWS_REGION)
+ddb = boto3.resource("dynamodb")
 users_tbl = ddb.Table(USERS_TABLE)
 state_tbl = ddb.Table(STATE_TABLE)
 signals_tbl = ddb.Table(SIGNALS_TABLE)
@@ -21,19 +21,8 @@ TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})")
 BUY_WORDS = re.compile(r"\b(buy|long|accumulate|moon|bullish)\b", re.IGNORECASE)
 SELL_WORDS = re.compile(r"\b(sell|short|profit|bearish)\b", re.IGNORECASE)
 
-TWEET_LINK_RE = re.compile(r'<a[^>]+href="/[A-Za-z0-9_]+/status/(\d+)"', re.IGNORECASE)
-TIME_RE = re.compile(r'<time datetime="([^"]+)"', re.IGNORECASE)
-CONTENT_RE = re.compile(
-    r'<div class="tweet-content[^"]*">(.*?)</div>', re.IGNORECASE | re.DOTALL
-)
-
-# ── A short list of public Nitter instances ───────────────────────────
-NITTER_INSTANCES = [
-    "https://nitter.net",
-    "https://nitter.snopyta.org",
-    "https://nitter.1d4.us",
-    "https://nitter.kavin.rocks",
-]
+# ── Twitter API settings ─────────────────────────────────────────────────
+TWITTER_API_URL = "https://api.twitter.com/2"  # v2 endpoints
 
 
 def extract_tickers(text: str) -> list[str]:
@@ -58,7 +47,7 @@ def classify_tweet(text: str) -> str:
 def get_last_id(state_key: str) -> str | None:
     """
     Fetch the last seen tweet_id from TweetState for a given state_key.
-    state_key is of the form "{user_id}#{handle}".
+    state_key format: "<user_id>#<twitter_user_id>".
     Returns None if no record exists.
     """
     try:
@@ -79,79 +68,48 @@ def set_last_id(state_key: str, tweet_id: str) -> None:
         print(f"[ERROR] set_last_id: {e}")
 
 
-def fetch_html_items(handle: str, since_id: str | None) -> list[dict]:
+def fetch_twitter_items(twitter_user_id: str, since_id: str | None) -> list[dict]:
     """
-    1) Attempt to GET https://<nitter_instance>/<handle> (HTML page).
-       Try each NITTER_INSTANCES in turn until one works.
-    2) Find all tweet IDs via regex on <a href="/<user>/status/<ID>">
-    3) For each ID > since_id:
-         • Extract a preview of the text from <div class="tweet-content">
-         • Extract the <time datetime="..."> as pub_date
-    4) Return sorted list (oldest first) of {tweet_id, pub_date, text}
+    1) GET https://api.twitter.com/2/users/:id/tweets
+       • QueryParams: "tweet.fields=created_at,text", "max_results=5" (or up to 100)
+       • If since_id is provided, pass it in ?since_id=...
+    2) Collect tweets newer than since_id (API already filters).
+    3) Return a list of { "tweet_id", "pub_date", "text" } sorted oldest→newest.
     """
-    html = None
-    for base_url in NITTER_INSTANCES:
-        url = f"{base_url}/{handle}"
-        try:
-            resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-            resp.raise_for_status()
-            html = resp.text
-            break  # success, stop trying other instances
-        except Exception as e:
-            print(f"[WARN] Failed to GET HTML for {handle} from {base_url}: {e}")
-            html = None
+    headers = {
+        "Authorization": f"Bearer {TWITTER_BEARER}",
+        "User-Agent": "v2UserTweetsPython",
+    }
+    params = {
+        "max_results": 5,  # fetch up to 5 at a time (you can bump to 100)
+        "tweet.fields": "created_at,text",
+    }
+    if since_id:
+        params["since_id"] = since_id
 
-    if not html:
-        # All instances failed
-        print(f"[ERROR] All Nitter instances failed for {handle}.")
+    url = f"{TWITTER_API_URL}/users/{twitter_user_id}/tweets"
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] Twitter API request failed for user {twitter_user_id}: {e}")
         return []
 
-    # 1) Find all tweet IDs in order of appearance (newest→oldest)
-    all_ids = TWEET_LINK_RE.findall(html)
-    if not all_ids:
+    data = r.json().get("data", [])
+    if not data:
         return []
 
-    # Deduplicate while preserving order
-    seen = set()
-    unique_ids = []
-    for tid in all_ids:
-        if tid not in seen:
-            seen.add(tid)
-            unique_ids.append(tid)
-
+    # Sort ascending by numeric tweet_id so oldest→newest
+    sorted_data = sorted(data, key=lambda x: int(x["id"]))
     items = []
-    for tid in unique_ids:
-        # Skip if ≤ since_id
-        if since_id:
-            if len(tid) == len(since_id):
-                if tid <= since_id:
-                    continue
-            else:
-                if int(tid) <= int(since_id):
-                    continue
-
-        # 2) Extract pub_date for this tweet (search near the <a href> occurrence)
-        snippet_start = html.find(f"/status/{tid}")
-        pub_date = ""
-        if snippet_start != -1:
-            window = html[snippet_start : snippet_start + 200]
-            m_time = TIME_RE.search(window)
-            if m_time:
-                pub_date = m_time.group(1)  # ISO-8601 string
-
-        # 3) Extract a short “text” preview (strip tags from tweet-content)
-        text = ""
-        if snippet_start != -1:
-            content_window = html[snippet_start : snippet_start + 800]
-            m_content = CONTENT_RE.search(content_window)
-            if m_content:
-                raw_html = m_content.group(1)
-                text = re.sub(r"<[^>]+>", "", raw_html).strip()
-
-        items.append({"tweet_id": tid, "pub_date": pub_date, "text": text})
-
-    # Reverse to get oldest→newest
-    items.reverse()
+    for tweet in sorted_data:
+        items.append(
+            {
+                "tweet_id": tweet["id"],
+                "pub_date": tweet.get("created_at", ""),
+                "text": tweet.get("text", ""),
+            }
+        )
     return items
 
 
@@ -169,21 +127,27 @@ def lambda_handler(event, context):
     for user_item in users:
         user_id = user_item["user_id"]
         tcfg = user_item.get("twitter_config", {})
-        handles = tcfg.get("handles", [])
+        handles = tcfg.get(
+            "handles", []
+        )  # now a list of { "handle": "...", "user_id": "<numeric>" }
 
         # If enabled==True but no handles, skip
         if not handles:
             continue
 
-        # For each handle, maintain a separate state_key = "{user_id}#{handle}"
-        for handle in handles:
-            state_key = f"{user_id}#{handle}"
+        for handle_obj in handles:
+            handle = handle_obj.get("handle")
+            twitter_user_id = handle_obj.get("user_id")
+            if not twitter_user_id:
+                continue  # skip if no numeric user_id
+
+            state_key = f"{user_id}#{twitter_user_id}"
             last_seen = get_last_id(state_key)
 
-            # Fetch new items from HTML for this handle > last_seen
-            new_items = fetch_html_items(handle, last_seen)
+            # Fetch new items from Twitter API for this user > last_seen
+            new_items = fetch_twitter_items(twitter_user_id, last_seen)
             if not new_items:
-                continue  # no new tweets for this handle
+                continue  # no new tweets
 
             max_seen = last_seen
             for entry in new_items:
@@ -191,7 +155,7 @@ def lambda_handler(event, context):
                 txt = entry["text"]
                 pub = entry["pub_date"]
 
-                # Update max_seen
+                # Update max_seen to the highest ID
                 if not max_seen or int(tid) > int(max_seen):
                     max_seen = tid
 
