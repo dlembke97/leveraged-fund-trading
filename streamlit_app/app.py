@@ -5,11 +5,13 @@ import pandas as pd
 from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
+import requests  # for Twitter lookup
 
 # ─── Configuration & DynamoDB Setup ────────────────────────────────────────────
 TABLE_NAME = st.secrets["DYNAMODB_TABLE_NAME"]
 AWS_REGION = st.secrets["AWS_REGION"]
 SENDER_EMAIL = st.secrets["SENDER_EMAIL"]
+TWITTER_BEARER_TOKEN = st.secrets.get("TWITTER_BEARER_TOKEN", "")
 
 FERNET_KEY = st.secrets["FERNET_KEY"].encode("utf-8")
 fernet = Fernet(FERNET_KEY)
@@ -105,7 +107,7 @@ def update_trading_config(user_id: str, config: dict) -> bool:
 
 def fetch_twitter_config(user_id: str) -> dict:
     """
-    Read twitter_config from Users table. Return a dict with 'handles' list and 'enabled' bool.
+    Read twitter_config from Users table. Return a dict with 'handles' (list of dicts) and 'enabled' bool.
     """
     item = get_user_item(user_id)
     if not item:
@@ -113,11 +115,11 @@ def fetch_twitter_config(user_id: str) -> dict:
     return item.get("twitter_config", {"handles": [], "enabled": False})
 
 
-def update_twitter_config(user_id: str, handles: list[str], enabled: bool) -> bool:
+def update_twitter_config(user_id: str, handle_objs: list[dict], enabled: bool) -> bool:
     """
-    Write twitter_config = {"handles": handles, "enabled": enabled} back to Users.
+    Write twitter_config = {"handles": handle_objs, "enabled": enabled} back to Users.
     """
-    tc = {"handles": handles, "enabled": enabled}
+    tc = {"handles": handle_objs, "enabled": enabled}
     try:
         table.update_item(
             Key={"user_id": user_id},
@@ -130,12 +132,30 @@ def update_twitter_config(user_id: str, handles: list[str], enabled: bool) -> bo
         return False
 
 
+def lookup_user_id(handle: str) -> str | None:
+    """
+    Call Twitter API v2 to get numeric user ID for a given handle.
+    Returns the ID as string, or None if not found / error.
+    """
+    if not TWITTER_BEARER_TOKEN:
+        return None
+    url = f"https://api.twitter.com/2/users/by/username/{handle}"
+    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        r.raise_for_status()
+        data = r.json().get("data", {})
+        return data.get("id")
+    except Exception:
+        return None
+
+
 def edit_trigger_quantity_table(
     key_prefix: str, prev_triggers: list, prev_quantities: list, table_title: str = None
 ):
     """
-    Renders a two-column data_editor labeled “Trigger” and “Quantity (USD)”.
-    Returns: (List[int], List[Decimal]) based on the edited DataFrame.
+    Renders a two-column data_editor labeled “Trigger” and “Quantity (USD)”:
+    Returns (List[int], List[Decimal]) based on the edited DataFrame.
     """
     df = pd.DataFrame(
         {
@@ -168,7 +188,7 @@ def edit_trigger_quantity_table(
 def render_buy_funding_block(key_prefix: str, prev_block: dict):
     """
     Renders “Buy-Funding Source” radio + conditional ticker/proportion table.
-    Returns either {"type": "cash"} or {"type": "sell", "sources": [ ... ]}.
+    Returns {"type": "cash"} or {"type": "sell", "sources": [ ... ]}.
     """
     prev_type = prev_block.get("type", "cash")
     st.write("**Buy-Funding Source**")
@@ -223,7 +243,7 @@ def render_buy_funding_block(key_prefix: str, prev_block: dict):
 def render_sell_realloc_block(key_prefix: str, prev_block: dict):
     """
     Renders “Sell-Proceeds Re-Allocation” radio + conditional ticker/proportion table.
-    Returns either {"enabled": False} or {"enabled": True, "targets": [ ... ]}.
+    Returns {"enabled": False} or {"enabled": True, "targets": [ ... ]}.
     """
     enabled = prev_block.get("enabled", False)
     st.write("**Sell-Proceeds Re-Allocation**")
@@ -564,23 +584,25 @@ with tabs[0]:
         # ── Subtab 2: X (Twitter) Trading ────────────────────────────────────
         with subtab2:
             st.info(
-                "Enter one or more Twitter handles, then optionally enable or disable scraping."
+                "Enter one or more Twitter handles (no ‘@’), then enable/disable scraping."
             )
 
-            # 1) Load existing twitter_config (handles list + enabled flag)
+            # 1) Load existing twitter_config (handles list of dicts + enabled flag)
             twitter_cfg = fetch_twitter_config(user_id)
-            existing_handles = twitter_cfg.get("handles", [])
+            existing_handle_objs = twitter_cfg.get("handles", [])
             existing_enabled = twitter_cfg.get("enabled", False)
 
+            # Build a display string from existing_handle_objs
+            existing_handles = [obj.get("handle", "") for obj in existing_handle_objs]
             handles_str = ", ".join(existing_handles) if existing_handles else ""
             handles_input = st.text_input(
-                "Twitter Handles (comma-separated, no '@')",
+                "Twitter Handles (comma-separated)",
                 value=handles_str,
                 key="x_handles_input",
-                help="e.g. CryptoGuru42, MarketSignalsBot",
+                help="e.g. cperruna, someOtherHandle",
             )
 
-            # Convert to a list of handles (strip whitespace)
+            # Convert to a list of bare handle strings
             handles_list = [h.strip() for h in handles_input.split(",") if h.strip()]
 
             # 2) Enable/disable checkbox (below the input)
@@ -592,10 +614,21 @@ with tabs[0]:
 
             # 3) Save X-Trading Settings button
             if st.button("Save X-Trading Settings"):
-                # Always save both handles_list and enabled flag
-                if update_twitter_config(user_id, handles_list, enabled):
-                    st.success("X-Trading settings saved!")
+                # Always save both handle_objs and enabled flag
+                handle_objs = []
+                all_ok = True
+                for h in handles_list:
+                    uid = lookup_user_id(h)
+                    if uid:
+                        handle_objs.append({"handle": h, "user_id": uid})
+                    else:
+                        st.error(f"Could not find Twitter user '{h}'. Fix and retry.")
+                        all_ok = False
+                        break
 
+                if all_ok:
+                    if update_twitter_config(user_id, handle_objs, enabled):
+                        st.success("X-Trading settings saved!")
 
 # ─── TAB 2: REGISTRATION (ADMIN ONLY) ───────────────────────────────────────────
 with tabs[1]:
