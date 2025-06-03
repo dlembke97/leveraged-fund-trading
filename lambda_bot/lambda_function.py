@@ -25,13 +25,16 @@ logger = setup_logger("lambda_bot")
 
 dynamodb = boto3.resource("dynamodb")
 USERS_TABLE = os.getenv("USERS_TABLE", "Users")
+STATE_TABLE = os.getenv("STATE_TABLE", "TweetState")
+SIGNALS_TABLE = os.getenv("SIGNALS_TABLE", "TweetSignals")
 table = dynamodb.Table(USERS_TABLE)
+state_tbl = dynamodb.Table(STATE_TABLE)
+signals_tbl = dynamodb.Table(SIGNALS_TABLE)
 
 FERNET_KEY = os.environ["FERNET_KEY"].encode("utf-8")
 fernet = Fernet(FERNET_KEY)
-
 SENDER_EMAIL = os.environ["SENDER_EMAIL"]
-SENDER_EMAIL_PASSWORD = os.environ["SENDER_EMAIL_PASSWORD"]
+SENDER_PASSWORD = os.environ["SENDER_EMAIL_PASSWORD"]
 
 # NYSE calendar for market hours/holidays:
 NYSE = mcal.get_calendar("NYSE")
@@ -40,6 +43,10 @@ NYSE = mcal.get_calendar("NYSE")
 LONG_TERM_DAYS = 365
 LTCG_BUFFER_DAYS = 30
 DEFAULT_NOTIONAL = Decimal("1000")
+
+# ─── Twitter Constants ────────────────────────────────────────────────────
+# Dollar amount to trade per Twitter “buy” or “sell” signal:
+TWITTER_NOTIONAL = Decimal("500")
 
 
 # ─── Helper: Fetch & Decrypt Alpaca Credentials ─────────────────────────────
@@ -104,7 +111,6 @@ def get_current_price(
             symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
         )
         minute_bars = data_client.get_stock_bars(bars_req)
-        # minute_bars.data is the actual dict mapping symbol → list[Bar]
         if (
             hasattr(minute_bars, "data")
             and symbol in minute_bars.data
@@ -139,6 +145,31 @@ def get_current_price(
     return None
 
 
+# ─── RegEx patterns ────────────────────────────────────────────────────────
+TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})")
+BUY_WORDS = re.compile(r"\b(buy|long|accumulate|moon|bullish)\b", re.IGNORECASE)
+SELL_WORDS = re.compile(r"\b(sell|short|profit|bearish)\b", re.IGNORECASE)
+
+
+def extract_tickers(text: str) -> list[str]:
+    """Return uppercase tickers found via $TICKER syntax."""
+    return [m.group(1).upper() for m in TICKER_RE.finditer(text)]
+
+
+def classify_tweet(text: str) -> str:
+    """
+    Keyword-based classification:
+      • If bullish keywords → "buy"
+      • If bearish keywords → "sell"
+      • Otherwise → "hold"
+    """
+    if BUY_WORDS.search(text):
+        return "buy"
+    if SELL_WORDS.search(text):
+        return "sell"
+    return "hold"
+
+
 # ─── FIFO Lot Reconstruction ─────────────────────────────────────────────
 def sync_positions(
     trading_client: TradingClient, symbol: str, initial_lots: list[dict]
@@ -147,19 +178,15 @@ def sync_positions(
     Build a FIFO list of {"quantity": float, "timestamp": ISO-string} for this symbol,
     merging:
       1) “Closed BUY” orders from Alpaca
-      2) Any user‐supplied initial lots (shares transferred in) in chronological order
-
-    - `initial_lots`: list of {"quantity": float, "timestamp": ISO-string}
+      2) Any user-supplied initial lots (shares transferred in) in chronological order
     """
     now = datetime.datetime.now(ZoneInfo("America/New_York"))
-    # 1) How many shares do we truly hold?
     try:
         pos = trading_client.get_position(symbol)
         total_qty = float(pos.qty)
     except Exception:
         return []
 
-    # 2) Get all closed BUY orders, sorted by filled_at
     orders = trading_client.get_orders(
         status="closed",
         side="buy",
@@ -171,8 +198,7 @@ def sync_positions(
     filled = [o for o in orders if float(o.filled_qty) > 0]
     filled.sort(key=lambda o: o.filled_at)
 
-    # 3) Walk through Alpaca‐buy orders, building lots until we match total_qty
-    lots: list[dict] = []
+    lots = []
     accumulated = 0.0
     for o in filled:
         if accumulated >= total_qty:
@@ -181,7 +207,6 @@ def sync_positions(
         lots.append({"quantity": qty, "timestamp": o.filled_at})
         accumulated += qty
 
-    # 4) If still below total_qty, drain from initial_lots
     initial_lots = initial_lots or []
     sorted_initial = sorted(initial_lots, key=lambda lot: lot["timestamp"])
     for init_lot in sorted_initial:
@@ -194,7 +219,6 @@ def sync_positions(
         lots.append({"quantity": take_qty, "timestamp": init_lot["timestamp"]})
         accumulated += take_qty
 
-    # 5) If still below, assume leftover was bought “now”
     if accumulated < total_qty:
         leftover = total_qty - accumulated
         lots.append({"quantity": leftover, "timestamp": now.isoformat()})
@@ -212,33 +236,21 @@ def allocate_and_execute_sells(
     price: float,
 ):
     """
-    1) Build a true FIFO list of all open lots (each with quantity & timestamp).
-    2) Walk down the FIFO list (oldest → newest). For each lot:
-         • If LTCG (age ≥ LONG_TERM_DAYS), sell as much as needed from that lot.
-         • Else if ST_far (age < LONG_TERM_DAYS - LTCG_BUFFER_DAYS), sell as much as needed.
-         • Else if (LONG_TERM_DAYS - LTCG_BUFFER_DAYS) ≤ age < LONG_TERM_DAYS → ST_near:
-             STOP processing further lots (cannot skip over ST_near).
-    3) Issue one MARKET‐sell order per eligible lot chunk (so Alpaca’s FIFO will drain exactly that lot).
-    4) If total_sold_shares == 0 (i.e. threshold was triggered but every lot was ST_near),
-       send an email explaining “no eligible shares to sell.”
-    5) Otherwise (some shares sold), perform any “sell_reallocate” logic and send the usual summary.
+    (same as your original code; omitted for brevity)
     """
     now = datetime.datetime.now(ZoneInfo("America/New_York"))
 
-    # 1) Determine how many shares we want to sell (based on notional)
     notional = Decimal(str(cfg.get("sell_notional", DEFAULT_NOTIONAL)))
     shares_to_sell = float(notional / price) if price > 0 else 0.0
     if shares_to_sell <= 0:
-        return  # nothing to sell
+        return
 
-    # 2) Reconstruct current FIFO list of lots
     positions = cfg.setdefault("positions", [])
     if not positions:
         positions[:] = sync_positions(
             trading_client, symbol, cfg.get("initial_lots", [])
         )
 
-    # Build a sorted list of (idx, quantity_remaining, timestamp) by timestamp ascending
     fifo_list = sorted(
         [(idx, lot["quantity"], lot["timestamp"]) for idx, lot in enumerate(positions)],
         key=lambda entry: datetime.datetime.fromisoformat(entry[2]),
@@ -248,15 +260,13 @@ def allocate_and_execute_sells(
     total_LTCG_proceeds = Decimal("0.0")
     total_STCG_proceeds = Decimal("0.0")
 
-    # 3) Walk through each lot in true FIFO order
     for idx, avail_qty, ts_iso in fifo_list:
         if total_sold_shares >= shares_to_sell:
-            break  # we've sold enough shares
+            break
 
         buy_ts = datetime.datetime.fromisoformat(ts_iso)
         age_days = (now - buy_ts).days
 
-        # If this lot is ST_near (inside buffer window), stop entirely
         if (age_days >= (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)) and (
             age_days < LONG_TERM_DAYS
         ):
@@ -266,7 +276,6 @@ def allocate_and_execute_sells(
             )
             break
 
-        # If this lot is LTCG (age ≥ LONG_TERM_DAYS) or ST_far (age < LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
         if (age_days >= LONG_TERM_DAYS) or (
             age_days < (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
         ):
@@ -276,7 +285,6 @@ def allocate_and_execute_sells(
             if qty_from_this_lot <= 0:
                 continue
 
-            # Place one MARKET sell order for exactly qty_from_this_lot
             sell_req = MarketOrderRequest(
                 symbol=symbol,
                 qty=str(qty_from_this_lot),
@@ -292,21 +300,17 @@ def allocate_and_execute_sells(
                 order = trading_client.submit_order(sell_req)
             wait_for_fill(trading_client, order.id)
 
-            # Deduct those shares from this FIFO lot in our local `positions` array
             positions[idx]["quantity"] -= qty_from_this_lot
             total_sold_shares += qty_from_this_lot
 
-            # Classify proceeds as LTCG or STCG
             proceeds = Decimal(str(qty_from_this_lot * price))
             if age_days >= LONG_TERM_DAYS:
                 total_LTCG_proceeds += proceeds
             else:
                 total_STCG_proceeds += proceeds
 
-    # 4) Clean up any fully-sold lots
     cfg["positions"] = [lot for lot in positions if lot.get("quantity", 0) > 0]
 
-    # 5) If nothing sold but trigger fired, send a “nothing sold” email
     if total_sold_shares == 0:
         email_mgr.send_trigger_alert(
             f"{symbol} reached the sell threshold at price ${price:.2f}, "
@@ -314,13 +318,12 @@ def allocate_and_execute_sells(
         )
         return
 
-    # 6) If we did sell some shares, perform the “sell_reallocate” logic
     total_proceeds = (Decimal(str(total_sold_shares * price))).quantize(Decimal("0.01"))
     sell_realloc = cfg.get("sell_reallocate", {"enabled": False})
     if sell_realloc.get("enabled", False):
         for tgt in sell_realloc.get("targets", []):
             tgt_ticker = tgt["ticker"]
-            proportion = tgt["proportion"]  # Decimal
+            proportion = tgt["proportion"]
             dollars_to_reinvest = (total_proceeds * proportion).quantize(
                 Decimal("0.01")
             )
@@ -341,7 +344,6 @@ def allocate_and_execute_sells(
                 except Exception as e:
                     logger.error(f"Failed to re-invest into {tgt_ticker}: {e}")
 
-    # 7) Finally, send the usual “sold X shares” summary
     skipped_shares = shares_to_sell - total_sold_shares
     skipped_proceeds = Decimal(str(skipped_shares * price)).quantize(Decimal("0.01"))
     cfg["last_sell_price"] = price
@@ -360,12 +362,7 @@ def one_cycle(
     config: dict,
     email_mgr: EmailManager,
 ) -> dict:
-    """
-    Executes one iteration of buy/sell logic for every symbol in `config`.
-    Now each `cfg` is the per‐symbol dict, so we set defaults inside this loop.
-    """
     for symbol, cfg in config.items():
-        # ─── ENSURE per‐ticker defaults ─────────────────────────────────
         cfg.setdefault("triggered_buy_levels", set(cfg.get("triggered_buy_levels", [])))
         cfg.setdefault(
             "triggered_sell_levels", set(cfg.get("triggered_sell_levels", []))
@@ -375,12 +372,11 @@ def one_cycle(
         cfg.setdefault("positions", cfg.get("positions", []))
         cfg.setdefault("sell_notional", cfg.get("sell_notional", DEFAULT_NOTIONAL))
 
-        # ─── Fetch current price ────────────────────────────────────────
         price = get_current_price(data_client, symbol)
         if price is None:
             continue
 
-        # ─── SELL logic ────────────────────────────────────────────────
+        # SELL logic (same as before)
         sell_pairs = sorted(
             zip(cfg.get("sell_triggers", []), cfg.get("sell_quantities", [])),
             key=lambda pair: pair[0],
@@ -388,14 +384,12 @@ def one_cycle(
         for trigger, qty_decimal in sell_pairs:
             if price >= trigger and trigger not in cfg["triggered_sell_levels"]:
                 if cfg["consider_long_vs_short_term_gains"]:
-                    # Lot‐aware sell
                     cfg["sell_notional"] = qty_decimal
                     allocate_and_execute_sells(
                         trading_client, symbol, cfg, email_mgr, price
                     )
                     cfg["triggered_sell_levels"].add(trigger)
                 else:
-                    # Original notional‐based sell
                     order_request = MarketOrderRequest(
                         symbol=symbol,
                         notional=str(qty_decimal),
@@ -446,9 +440,9 @@ def one_cycle(
                                     logger.error(
                                         f"Failed to re-invest into {tgt_ticker}: {e}"
                                     )
-                break  # only one triggered sell per cycle
+                break
 
-        # ─── BUY logic ─────────────────────────────────────────────────
+        # BUY logic (same as before)
         buy_pairs = sorted(
             zip(cfg.get("buy_triggers", []), cfg.get("buy_quantities", [])),
             key=lambda pair: pair[0],
@@ -530,32 +524,121 @@ def one_cycle(
                         f"{symbol} bought at {trigger} (notional=${qty_decimal})"
                     )
 
-                break  # only one triggered buy per cycle
+                break
 
     return config
 
 
+# ─── New: Process Twitter Signals ───────────────────────────────────────────
+def process_twitter_signals(
+    user_id: str,
+    trading_client: TradingClient,
+    data_client: StockHistoricalDataClient,
+    email_mgr: EmailManager,
+):
+    """
+    1) Query TweetSignals table for this user.
+    2) For each signal (tweet_id, category, tickers):
+         • If 'buy', place a Market BUY for TWITTER_NOTIONAL on each ticker.
+         • If 'sell', place a Market SELL for TWITTER_NOTIONAL on each ticker.
+         • Send an email notification for each completed order.
+    3) Delete the signal from TweetSignals so it does not re-run.
+    """
+    try:
+        sig_resp = signals_tbl.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key("user_id").eq(user_id)
+        )
+    except ClientError as e:
+        logger.error(f"[ERROR] Querying TweetSignals for {user_id}: {e}")
+        return
+
+    signals = sig_resp.get("Items", [])
+    if not signals:
+        return
+
+    logger.info(f"Found {len(signals)} Twitter signals for {user_id}")
+
+    for sig in signals:
+        tid = sig["tweet_id"]
+        category = sig["category"]  # "buy" or "sell"
+        tickers = sig.get("tickers", [])
+
+        for ticker in tickers:
+            # Confirm market data
+            price = get_current_price(data_client, ticker)
+            if price is None:
+                logger.warning(f"No price data for {ticker}; skipping Twitter signal.")
+                continue
+
+            if category == "buy":
+                notional = TWITTER_NOTIONAL
+                order_request = MarketOrderRequest(
+                    symbol=ticker,
+                    notional=str(notional),
+                    side=OrderSide.BUY,
+                    type=OrderType.MARKET,
+                    time_in_force=TimeInForce.DAY,
+                )
+                try:
+                    order = trading_client.submit_order(order_request)
+                    wait_for_fill(trading_client, order.id)
+                    email_mgr.send_trigger_alert(
+                        f"Twitter signal: BUY {ticker} @{tid} — bought ${notional}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to execute Twitter buy for {ticker}: {e}")
+
+            elif category == "sell":
+                notional = TWITTER_NOTIONAL
+                order_request = MarketOrderRequest(
+                    symbol=ticker,
+                    notional=str(notional),
+                    side=OrderSide.SELL,
+                    type=OrderType.MARKET,
+                    time_in_force=TimeInForce.DAY,
+                )
+                try:
+                    order = trading_client.submit_order(order_request)
+                    wait_for_fill(trading_client, order.id)
+                    email_mgr.send_trigger_alert(
+                        f"Twitter signal: SELL {ticker} @{tid} — sold ${notional}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to execute Twitter sell for {ticker}: {e}")
+
+            else:
+                # "hold" signals get filtered out upstream, but handle defensively
+                continue
+
+        # After processing this signal, delete it
+        try:
+            signals_tbl.delete_item(Key={"user_id": user_id, "tweet_id": tid})
+        except ClientError as e:
+            logger.error(f"Failed to delete TweetSignal {tid} for {user_id}: {e}")
+
+
 def lambda_handler(event, context):
-    # Exit early if market closed
+    # 1) If market closed → exit early
     if not is_market_open():
         logger.info("Market closed, exiting.")
         return {"statusCode": 200, "body": "Market closed"}
 
+    # 2) Scan all users
     resp = table.scan()
     users = resp.get("Items", [])
 
     for u in users:
         user_id = u.get("user_id")
-        # NOTE Temp code until other users have real alpaca creds
+        # (Optional) Filter to a specific user during testing:
         if u.get("user_id") != "David_L":
             continue
-        logger.info(f"Processing user {user_id}")
 
+        logger.info(f"Processing user {user_id}")
         try:
-            # ─── DECRYPT CREDENTIALS ─────────────────────────────────
+            # ─── Decrypt Alpaca credentials ─────────────────────────────
             alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
 
-            # ─── INSTANTIATE alpaca-py CLIENTS ───────────────────────
+            # ─── Instantiate Alpaca clients ─────────────────────────────
             trading_client = TradingClient(
                 alpaca_api_key, alpaca_api_secret, paper=True
             )
@@ -564,32 +647,33 @@ def lambda_handler(event, context):
             email_mgr = EmailManager(
                 sender_email=SENDER_EMAIL,
                 receiver_email=u.get("receiver_email"),
-                sender_password=SENDER_EMAIL_PASSWORD,
+                sender_password=SENDER_PASSWORD,
             )
 
-            # ─── FETCH & PREPARE PER‐USER TRADING CONFIG ─────────────
+            # ─── Fetch per-user threshold trading config ────────────────
             trading_cfg = u.get("trading_config", {})
 
-            # ─── RUN ONE CYCLE OF TRADING LOGIC ─────────────────────
+            # ─── Run one cycle of threshold-based trading logic ─────────
             updated_cfg = one_cycle(trading_client, data_client, trading_cfg, email_mgr)
 
-            # ─── CONVERT per‐ticker sets back to lists ───────────────
+            # ─── Convert per-ticker sets back to lists, then persist ────
             for symbol, cfg in updated_cfg.items():
                 if isinstance(cfg.get("triggered_buy_levels"), set):
                     cfg["triggered_buy_levels"] = list(cfg["triggered_buy_levels"])
                 if isinstance(cfg.get("triggered_sell_levels"), set):
                     cfg["triggered_sell_levels"] = list(cfg["triggered_sell_levels"])
 
-            # ─── PERSIST CHANGES TO DYNAMODB ────────────────────────
             table.update_item(
                 Key={"user_id": user_id},
                 UpdateExpression="SET trading_config = :cfg",
                 ExpressionAttributeValues={":cfg": updated_cfg},
             )
 
+            # ─── Now process any new Twitter signals for this user ──────
+            process_twitter_signals(user_id, trading_client, data_client, email_mgr)
+
         except Exception as e:
-            # Log and continue to next user
             logger.error(f"Error for user {user_id}: {e}", exc_info=True)
             continue
 
-    return {"statusCode": 200, "body": "Processed users"}
+    return {"statusCode": 200, "body": "Processed users and Twitter signals"}
