@@ -27,6 +27,14 @@ CONTENT_RE = re.compile(
     r'<div class="tweet-content[^"]*">(.*?)</div>', re.IGNORECASE | re.DOTALL
 )
 
+# ── A short list of public Nitter instances ───────────────────────────
+NITTER_INSTANCES = [
+    "https://nitter.net",
+    "https://nitter.snopyta.org",
+    "https://nitter.1d4.us",
+    "https://nitter.kavin.rocks",
+]
+
 
 def extract_tickers(text: str) -> list[str]:
     """Return uppercase tickers found via $TICKER syntax."""
@@ -73,22 +81,30 @@ def set_last_id(state_key: str, tweet_id: str) -> None:
 
 def fetch_html_items(handle: str, since_id: str | None) -> list[dict]:
     """
-    1) GET https://nitter.net/<handle> (HTML page).
+    1) Attempt to GET https://<nitter_instance>/<handle> (HTML page).
+       Try each NITTER_INSTANCES in turn until one works.
     2) Find all tweet IDs via regex on <a href="/<user>/status/<ID>">
     3) For each ID > since_id:
          • Extract a preview of the text from <div class="tweet-content">
          • Extract the <time datetime="..."> as pub_date
     4) Return sorted list (oldest first) of {tweet_id, pub_date, text}
     """
-    url = f"https://nitter.net/{handle}"
-    try:
-        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"[ERROR] Failed to GET HTML for {handle}: {e}")
-        return []
+    html = None
+    for base_url in NITTER_INSTANCES:
+        url = f"{base_url}/{handle}"
+        try:
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            html = resp.text
+            break  # success, stop trying other instances
+        except Exception as e:
+            print(f"[WARN] Failed to GET HTML for {handle} from {base_url}: {e}")
+            html = None
 
-    html = resp.text
+    if not html:
+        # All instances failed
+        print(f"[ERROR] All Nitter instances failed for {handle}.")
+        return []
 
     # 1) Find all tweet IDs in order of appearance (newest→oldest)
     all_ids = TWEET_LINK_RE.findall(html)
@@ -105,7 +121,7 @@ def fetch_html_items(handle: str, since_id: str | None) -> list[dict]:
 
     items = []
     for tid in unique_ids:
-        # Skip if <= since_id
+        # Skip if ≤ since_id
         if since_id:
             if len(tid) == len(since_id):
                 if tid <= since_id:
