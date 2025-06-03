@@ -2,9 +2,8 @@ import os
 import re
 import boto3
 import requests
-import xml.etree.ElementTree as ET
 from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key, Attr
+from boto3.dynamodb.conditions import Attr
 
 # ── Configuration from environment ────────────────────────────────
 USERS_TABLE = os.environ["USERS_TABLE"]  # e.g. "Users"
@@ -22,6 +21,12 @@ TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})")
 BUY_WORDS = re.compile(r"\b(buy|long|accumulate|moon|bullish)\b", re.IGNORECASE)
 SELL_WORDS = re.compile(r"\b(sell|short|profit|bearish)\b", re.IGNORECASE)
 
+TWEET_LINK_RE = re.compile(r'<a[^>]+href="/[A-Za-z0-9_]+/status/(\d+)"', re.IGNORECASE)
+TIME_RE = re.compile(r'<time datetime="([^"]+)"', re.IGNORECASE)
+CONTENT_RE = re.compile(
+    r'<div class="tweet-content[^"]*">(.*?)</div>', re.IGNORECASE | re.DOTALL
+)
+
 
 def extract_tickers(text: str) -> list[str]:
     """Return uppercase tickers found via $TICKER syntax."""
@@ -30,7 +35,7 @@ def extract_tickers(text: str) -> list[str]:
 
 def classify_tweet(text: str) -> str:
     """
-    Keyword‐based classification:
+    Keyword-based classification:
       • If bullish keywords → "buy"
       • If bearish keywords → "sell"
       • Otherwise → "hold"
@@ -66,34 +71,42 @@ def set_last_id(state_key: str, tweet_id: str) -> None:
         print(f"[ERROR] set_last_id: {e}")
 
 
-def fetch_rss_for_handle(handle: str, since_id: str | None) -> list[dict]:
+def fetch_html_items(handle: str, since_id: str | None) -> list[dict]:
     """
-    1) GET https://nitter.net/<handle>/rss
-    2) Parse each <item>:
-       - Extract tweet_id from link (/status/<ID>)
-       - If tweet_id > since_id, include it
-       - Return sorted list (oldest first) of {tweet_id, pub_date, text}
+    1) GET https://nitter.net/<handle> (HTML page).
+    2) Find all tweet IDs via regex on <a href="/<user>/status/<ID>">
+    3) For each ID > since_id:
+         • Extract a preview of the text from <div class="tweet-content">
+         • Extract the <time datetime="..."> as pub_date
+    4) Return sorted list (oldest first) of {tweet_id, pub_date, text}
     """
-    rss_url = f"https://nitter.net/{handle}/rss"
+    url = f"https://nitter.net/{handle}"
     try:
-        resp = requests.get(rss_url, timeout=10)
+        resp = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
     except Exception as e:
-        print(f"[ERROR] Failed to GET RSS for {handle}: {e}")
+        print(f"[ERROR] Failed to GET HTML for {handle}: {e}")
         return []
 
-    root = ET.fromstring(resp.text)
-    items = []
-    for item in root.findall("./channel/item"):
-        link = item.findtext("link", "")
-        m = re.search(r"/status/(\d+)", link or "")
-        if not m:
-            continue
-        tid = m.group(1)  # tweet_id as string
+    html = resp.text
 
+    # 1) Find all tweet IDs in order of appearance (newest→oldest)
+    all_ids = TWEET_LINK_RE.findall(html)
+    if not all_ids:
+        return []
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_ids = []
+    for tid in all_ids:
+        if tid not in seen:
+            seen.add(tid)
+            unique_ids.append(tid)
+
+    items = []
+    for tid in unique_ids:
         # Skip if <= since_id
         if since_id:
-            # Compare as strings if same length, else compare ints
             if len(tid) == len(since_id):
                 if tid <= since_id:
                     continue
@@ -101,17 +114,33 @@ def fetch_rss_for_handle(handle: str, since_id: str | None) -> list[dict]:
                 if int(tid) <= int(since_id):
                     continue
 
-        text = item.findtext("title", "").strip()
-        pub_date = item.findtext("pubDate", "")
+        # 2) Extract pub_date for this tweet (search near the <a href> occurrence)
+        snippet_start = html.find(f"/status/{tid}")
+        pub_date = ""
+        if snippet_start != -1:
+            window = html[snippet_start : snippet_start + 200]
+            m_time = TIME_RE.search(window)
+            if m_time:
+                pub_date = m_time.group(1)  # ISO-8601 string
+
+        # 3) Extract a short “text” preview (strip tags from tweet-content)
+        text = ""
+        if snippet_start != -1:
+            content_window = html[snippet_start : snippet_start + 800]
+            m_content = CONTENT_RE.search(content_window)
+            if m_content:
+                raw_html = m_content.group(1)
+                text = re.sub(r"<[^>]+>", "", raw_html).strip()
+
         items.append({"tweet_id": tid, "pub_date": pub_date, "text": text})
 
-    # Sort ascending by numeric tweet_id so oldest first
-    items.sort(key=lambda x: int(x["tweet_id"]))
+    # Reverse to get oldest→newest
+    items.reverse()
     return items
 
 
 def lambda_handler(event, context):
-    # 1) Scan Users where twitter_config.enabled == True and handles list is non-empty
+    # 1) Scan Users where twitter_config.enabled == True
     try:
         resp = users_tbl.scan(FilterExpression=Attr("twitter_config.enabled").eq(True))
     except ClientError as e:
@@ -135,8 +164,8 @@ def lambda_handler(event, context):
             state_key = f"{user_id}#{handle}"
             last_seen = get_last_id(state_key)
 
-            # Fetch new items from RSS for this handle > last_seen
-            new_items = fetch_rss_for_handle(handle, last_seen)
+            # Fetch new items from HTML for this handle > last_seen
+            new_items = fetch_html_items(handle, last_seen)
             if not new_items:
                 continue  # no new tweets for this handle
 
@@ -177,7 +206,6 @@ def lambda_handler(event, context):
                     print(
                         f"[ERROR] Writing TweetSignals for {user_id}, handle={handle}, tid={tid}: {e}"
                     )
-                    # continue to next tweet
 
             # 5) Update TweetState for this user+handle with new max_seen
             if max_seen and max_seen != last_seen:
