@@ -8,6 +8,7 @@ import boto3
 from decimal import Decimal
 from cryptography.fernet import Fernet
 from botocore.exceptions import ClientError
+from boto3.dynamodb.conditions import Key
 
 # alpaca-py imports
 from alpaca.trading.client import TradingClient
@@ -20,6 +21,47 @@ from alpaca.data.timeframe import TimeFrame as DataTimeFrame
 import pandas_market_calendars as mcal
 
 from lambda_bot.common_scripts import EmailManager, setup_logger
+
+# ─── Anthropic imports & setup ─────────────────────────────────────────────
+import anthropic
+
+ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_KEY:
+    raise RuntimeError("Missing environment variable: ANTHROPIC_API_KEY")
+anthropic_client = anthropic.Client(api_key=ANTHROPIC_KEY)
+
+HUMAN_PROMPT = "\n\nHuman: "
+AI_PROMPT = "\n\nAssistant: "
+
+
+def classify_tweet_anth(text: str) -> str:
+    """
+    Send a prompt to Claude Instant asking for exactly one label
+    from {buy, sell, hold, monitor}. If the response is not one of
+    those, or if an error occurs, return "hold" by default.
+    """
+    prompt = (
+        f"{HUMAN_PROMPT}"
+        f"Classify this tweet as BUY / SELL / HOLD / MONITOR (one word only):\n"
+        f'"{text}"'
+        f"{AI_PROMPT}"
+    )
+    try:
+        response = anthropic_client.completions.create(
+            model="claude-instant-v1",
+            prompt=prompt,
+            max_tokens_to_sample=1,
+            stop_sequences=[AI_PROMPT],
+        )
+        choice = response.completion.strip().lower()
+        choice = re.sub(r"[^a-z]", "", choice)
+        if choice in {"buy", "sell", "hold", "monitor"}:
+            return choice
+        return "hold"
+    except Exception as e:
+        print(f"[WARN] Anthropic classification failed: {e}")
+        return "hold"
+
 
 # ─── Setup ───────────────────────────────────────────────
 logger = setup_logger("lambda_bot")
@@ -106,7 +148,6 @@ def get_current_price(
        fall back to today’s daily bar.
     2) If there is still no bar for `symbol`, return None.
     """
-    # ─── Try minute bars ─────────────────────────────────────────
     try:
         bars_req = StockBarsRequest(
             symbol_or_symbols=[symbol], timeframe=DataTimeFrame.Minute, limit=1
@@ -123,7 +164,6 @@ def get_current_price(
             f"Could not fetch minute bars for {symbol} (403 or no data); falling back to daily."
         )
 
-    # ─── Fall back to a daily bar for “today” ───────────────────
     today_iso = datetime.date.today().isoformat()
     try:
         bars_req = StockBarsRequest(
@@ -148,27 +188,11 @@ def get_current_price(
 
 # ─── RegEx patterns ────────────────────────────────────────────────────────
 TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})")
-BUY_WORDS = re.compile(r"\b(buy|long|accumulate|moon|bullish)\b", re.IGNORECASE)
-SELL_WORDS = re.compile(r"\b(sell|short|profit|bearish)\b", re.IGNORECASE)
 
 
 def extract_tickers(text: str) -> list[str]:
     """Return uppercase tickers found via $TICKER syntax."""
     return [m.group(1).upper() for m in TICKER_RE.finditer(text)]
-
-
-def classify_tweet(text: str) -> str:
-    """
-    Keyword-based classification:
-      • If bullish keywords → "buy"
-      • If bearish keywords → "sell"
-      • Otherwise → "hold"
-    """
-    if BUY_WORDS.search(text):
-        return "buy"
-    if SELL_WORDS.search(text):
-        return "sell"
-    return "hold"
 
 
 # ─── FIFO Lot Reconstruction ─────────────────────────────────────────────
@@ -244,7 +268,7 @@ def allocate_and_execute_sells(
     notional = Decimal(str(cfg.get("sell_notional", DEFAULT_NOTIONAL)))
     shares_to_sell = float(notional / price) if price > 0 else 0.0
     if shares_to_sell <= 0:
-        return
+        return  # nothing to sell
 
     positions = cfg.setdefault("positions", [])
     if not positions:
@@ -268,6 +292,7 @@ def allocate_and_execute_sells(
         buy_ts = datetime.datetime.fromisoformat(ts_iso)
         age_days = (now - buy_ts).days
 
+        # If this lot is ST_near (inside buffer window), stop entirely
         if (age_days >= (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)) and (
             age_days < LONG_TERM_DAYS
         ):
@@ -277,6 +302,7 @@ def allocate_and_execute_sells(
             )
             break
 
+        # If this lot is LTCG (age ≥ LONG_TERM_DAYS) or ST_far (age < LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
         if (age_days >= LONG_TERM_DAYS) or (
             age_days < (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
         ):
@@ -324,7 +350,7 @@ def allocate_and_execute_sells(
     if sell_realloc.get("enabled", False):
         for tgt in sell_realloc.get("targets", []):
             tgt_ticker = tgt["ticker"]
-            proportion = tgt["proportion"]
+            proportion = tgt["proportion"]  # Decimal
             dollars_to_reinvest = (total_proceeds * proportion).quantize(
                 Decimal("0.01")
             )
@@ -377,7 +403,7 @@ def one_cycle(
         if price is None:
             continue
 
-        # SELL logic (same as before)
+        # ─── SELL logic ────────────────────────────────────────────────
         sell_pairs = sorted(
             zip(cfg.get("sell_triggers", []), cfg.get("sell_quantities", [])),
             key=lambda pair: pair[0],
@@ -441,9 +467,9 @@ def one_cycle(
                                     logger.error(
                                         f"Failed to re-invest into {tgt_ticker}: {e}"
                                     )
-                break
+                break  # only one triggered sell per cycle
 
-        # BUY logic (same as before)
+        # ─── BUY logic ─────────────────────────────────────────────────
         buy_pairs = sorted(
             zip(cfg.get("buy_triggers", []), cfg.get("buy_quantities", [])),
             key=lambda pair: pair[0],
@@ -525,12 +551,14 @@ def one_cycle(
                         f"{symbol} bought at {trigger} (notional=${qty_decimal})"
                     )
 
-                break
+                break  # only one triggered buy per cycle
 
     return config
 
 
-# ─── New: Process Twitter Signals ───────────────────────────────────────────
+# ─── Process Twitter Signals (with Anthropic) ───────────────────────────
+
+
 def process_twitter_signals(
     user_id: str,
     trading_client: TradingClient,
@@ -538,17 +566,15 @@ def process_twitter_signals(
     email_mgr: EmailManager,
 ):
     """
-    1) Query TweetSignals table for this user.
-    2) For each signal (tweet_id, category, tickers):
-         • If 'buy', place a Market BUY for TWITTER_NOTIONAL on each ticker.
-         • If 'sell', place a Market SELL for TWITTER_NOTIONAL on each ticker.
-         • Send an email notification for each completed order.
-    3) Delete the signal from TweetSignals so it does not re-run.
+    1) Query TweetSignals for this user.
+    2) For each raw signal (tweet_id, text, tickers):
+         • Call classify_tweet_anth(text) → category in {buy,sell,hold,monitor}
+         • If 'hold': delete, skip
+         • If 'monitor': send email & delete (no trade)
+         • If 'buy'/'sell': place TWITTER_NOTIONAL MarketOrder per ticker & email, then delete
     """
     try:
-        sig_resp = signals_tbl.query(
-            KeyConditionExpression=boto3.dynamodb.conditions.Key("user_id").eq(user_id)
-        )
+        sig_resp = signals_tbl.query(KeyConditionExpression=Key("user_id").eq(user_id))
     except ClientError as e:
         logger.error(f"[ERROR] Querying TweetSignals for {user_id}: {e}")
         return
@@ -561,85 +587,85 @@ def process_twitter_signals(
 
     for sig in signals:
         tid = sig["tweet_id"]
-        category = sig["category"]  # "buy" or "sell"
+        text = sig["text"]
         tickers = sig.get("tickers", [])
 
+        # 1) Classify via Anthropic
+        category = classify_tweet_anth(text)  # "buy", "sell", "hold", or "monitor"
+
+        # 2) If “hold”: delete and skip
+        if category == "hold":
+            try:
+                signals_tbl.delete_item(Key={"user_id": user_id, "tweet_id": tid})
+            except ClientError as e:
+                logger.error(f"Failed to delete TweetSignal {tid}: {e}")
+            continue
+
+        # 3) If “monitor”: send email alert & delete
+        if category == "monitor":
+            email_mgr.send_trigger_alert(
+                f'Twitter signal (monitor) @{tid}\n"{text}"\nTickers: {tickers}'
+            )
+            try:
+                signals_tbl.delete_item(Key={"user_id": user_id, "tweet_id": tid})
+            except ClientError as e:
+                logger.error(f"Failed to delete TweetSignal {tid}: {e}")
+            continue
+
+        # 4) If “buy” or “sell”: execute TWITTER_NOTIONAL market order per ticker
         for ticker in tickers:
-            # Confirm market data
             price = get_current_price(data_client, ticker)
             if price is None:
-                logger.warning(f"No price data for {ticker}; skipping Twitter signal.")
+                logger.warning(
+                    f"No price for {ticker}; skipping Twitter signal @{tid}."
+                )
                 continue
 
-            if category == "buy":
-                notional = TWITTER_NOTIONAL
-                order_request = MarketOrderRequest(
-                    symbol=ticker,
-                    notional=str(notional),
-                    side=OrderSide.BUY,
-                    type=OrderType.MARKET,
-                    time_in_force=TimeInForce.DAY,
+            side = OrderSide.BUY if category == "buy" else OrderSide.SELL
+            order_request = MarketOrderRequest(
+                symbol=ticker,
+                notional=str(TWITTER_NOTIONAL),
+                side=side,
+                type=OrderType.MARKET,
+                time_in_force=TimeInForce.DAY,
+            )
+            try:
+                order = trading_client.submit_order(order_request)
+                wait_for_fill(trading_client, order.id)
+                email_mgr.send_trigger_alert(
+                    f"Twitter signal ({category.upper()}) {ticker} @{tid} — executed ${TWITTER_NOTIONAL}"
                 )
-                try:
-                    order = trading_client.submit_order(order_request)
-                    wait_for_fill(trading_client, order.id)
-                    email_mgr.send_trigger_alert(
-                        f"Twitter signal: BUY {ticker} @{tid} — bought ${notional}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to execute Twitter buy for {ticker}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to execute Twitter {category} for {ticker}: {e}")
 
-            elif category == "sell":
-                notional = TWITTER_NOTIONAL
-                order_request = MarketOrderRequest(
-                    symbol=ticker,
-                    notional=str(notional),
-                    side=OrderSide.SELL,
-                    type=OrderType.MARKET,
-                    time_in_force=TimeInForce.DAY,
-                )
-                try:
-                    order = trading_client.submit_order(order_request)
-                    wait_for_fill(trading_client, order.id)
-                    email_mgr.send_trigger_alert(
-                        f"Twitter signal: SELL {ticker} @{tid} — sold ${notional}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to execute Twitter sell for {ticker}: {e}")
-
-            else:
-                # "hold" signals get filtered out upstream, but handle defensively
-                continue
-
-        # After processing this signal, delete it
+        # 5) Delete the processed signal
         try:
             signals_tbl.delete_item(Key={"user_id": user_id, "tweet_id": tid})
         except ClientError as e:
-            logger.error(f"Failed to delete TweetSignal {tid} for {user_id}: {e}")
+            logger.error(f"Failed to delete TweetSignal {tid}: {e}")
 
 
 def lambda_handler(event, context):
-    # 1) If market closed → exit early
+    # Exit early if market is closed
     if not is_market_open():
         logger.info("Market closed, exiting.")
         return {"statusCode": 200, "body": "Market closed"}
 
-    # 2) Scan all users
     resp = table.scan()
     users = resp.get("Items", [])
 
     for u in users:
         user_id = u.get("user_id")
-        # (Optional) Filter to a specific user during testing:
+        # (Optional) filter test user
         if u.get("user_id") != "David_L":
             continue
-
         logger.info(f"Processing user {user_id}")
+
         try:
-            # ─── Decrypt Alpaca credentials ─────────────────────────────
+            # ─── Decrypt Alpaca creds ─────────────────────────────────
             alpaca_api_key, alpaca_api_secret = get_decrypted_alpaca_creds(user_id)
 
-            # ─── Instantiate Alpaca clients ─────────────────────────────
+            # ─── Instantiate alpaca-py clients ───────────────────────
             trading_client = TradingClient(
                 alpaca_api_key, alpaca_api_secret, paper=True
             )
@@ -651,13 +677,11 @@ def lambda_handler(event, context):
                 sender_password=SENDER_PASSWORD,
             )
 
-            # ─── Fetch per-user threshold trading config ────────────────
+            # ─── Threshold-based trading cycle ─────────────────────────
             trading_cfg = u.get("trading_config", {})
-
-            # ─── Run one cycle of threshold-based trading logic ─────────
             updated_cfg = one_cycle(trading_client, data_client, trading_cfg, email_mgr)
 
-            # ─── Convert per-ticker sets back to lists, then persist ────
+            # Convert sets back to lists and persist
             for symbol, cfg in updated_cfg.items():
                 if isinstance(cfg.get("triggered_buy_levels"), set):
                     cfg["triggered_buy_levels"] = list(cfg["triggered_buy_levels"])
@@ -670,11 +694,11 @@ def lambda_handler(event, context):
                 ExpressionAttributeValues={":cfg": updated_cfg},
             )
 
-            # ─── Now process any new Twitter signals for this user ──────
+            # ─── Now process Twitter signals with Anthropic classification ─────────
             process_twitter_signals(user_id, trading_client, data_client, email_mgr)
 
         except Exception as e:
-            logger.error(f"Error for user {user_id}: {e}", exc_info=True)
+            logger.error(f"Error processing user {user_id}: {e}", exc_info=True)
             continue
 
     return {"statusCode": 200, "body": "Processed users and Twitter signals"}
