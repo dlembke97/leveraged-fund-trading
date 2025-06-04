@@ -47,6 +47,7 @@ jobs:
                 bcrypt \
                 alpaca-py \
                 pandas_market_calendars \
+                anthropic \
                 -t /opt/python \
               && find /opt/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
             "

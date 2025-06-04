@@ -7,41 +7,22 @@ from boto3.dynamodb.conditions import Attr
 
 # ── Configuration from environment ────────────────────────────────
 USERS_TABLE = os.environ["USERS_TABLE"]  # e.g. "Users"
-STATE_TABLE = os.environ["STATE_TABLE"]  # "TweetState"
-SIGNALS_TABLE = os.environ["SIGNALS_TABLE"]  # "TweetSignals"
-TWITTER_BEARER = os.environ["TWITTER_BEARER_TOKEN"]  # from Twitter Developer Portal
+STATE_TABLE = os.environ["STATE_TABLE"]  # e.g. "TweetState"
+SIGNALS_TABLE = os.environ["SIGNALS_TABLE"]  # e.g. "TweetSignals"
+TWITTER_BEARER = os.environ["TWITTER_BEARER_TOKEN"]
 
 ddb = boto3.resource("dynamodb")
 users_tbl = ddb.Table(USERS_TABLE)
 state_tbl = ddb.Table(STATE_TABLE)
 signals_tbl = ddb.Table(SIGNALS_TABLE)
 
-# ── RegEx patterns ────────────────────────────────────────────────────────
+# ── RegEx pattern for extracting tickers ───────────────────────────
 TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})")
-BUY_WORDS = re.compile(r"\b(buy|long|accumulate|moon|bullish)\b", re.IGNORECASE)
-SELL_WORDS = re.compile(r"\b(sell|short|profit|bearish)\b", re.IGNORECASE)
-
-# ── Twitter API settings ─────────────────────────────────────────────────
-TWITTER_API_URL = "https://api.twitter.com/2"  # v2 endpoints
 
 
 def extract_tickers(text: str) -> list[str]:
     """Return uppercase tickers found via $TICKER syntax."""
     return [m.group(1).upper() for m in TICKER_RE.finditer(text)]
-
-
-def classify_tweet(text: str) -> str:
-    """
-    Keyword-based classification:
-      • If bullish keywords → "buy"
-      • If bearish keywords → "sell"
-      • Otherwise → "hold"
-    """
-    if BUY_WORDS.search(text):
-        return "buy"
-    if SELL_WORDS.search(text):
-        return "sell"
-    return "hold"
 
 
 def get_last_id(state_key: str) -> str | None:
@@ -71,23 +52,22 @@ def set_last_id(state_key: str, tweet_id: str) -> None:
 def fetch_twitter_items(twitter_user_id: str, since_id: str | None) -> list[dict]:
     """
     1) GET https://api.twitter.com/2/users/:id/tweets
-       • QueryParams: "tweet.fields=created_at,text", "max_results=5" (or up to 100)
-       • If since_id is provided, pass it in ?since_id=...
-    2) Collect tweets newer than since_id (API already filters).
-    3) Return a list of { "tweet_id", "pub_date", "text" } sorted oldest→newest.
+       • QueryParams: "tweet.fields=created_at,text", "max_results=5"
+       • If since_id is provided, pass it in as ?since_id=<since_id>
+    2) Return a list of { "tweet_id", "pub_date", "text" } sorted oldest→newest.
     """
     headers = {
         "Authorization": f"Bearer {TWITTER_BEARER}",
         "User-Agent": "v2UserTweetsPython",
     }
     params = {
-        "max_results": 5,  # fetch up to 5 at a time (you can bump to 100)
+        "max_results": 5,  # up to 5 at a time (you can bump to 100)
         "tweet.fields": "created_at,text",
     }
     if since_id:
         params["since_id"] = since_id
 
-    url = f"{TWITTER_API_URL}/users/{twitter_user_id}/tweets"
+    url = f"https://api.twitter.com/2/users/{twitter_user_id}/tweets"
     try:
         r = requests.get(url, params=params, headers=headers, timeout=10)
         r.raise_for_status()
@@ -129,7 +109,7 @@ def lambda_handler(event, context):
         tcfg = user_item.get("twitter_config", {})
         handles = tcfg.get(
             "handles", []
-        )  # now a list of { "handle": "...", "user_id": "<numeric>" }
+        )  # now a list of {"handle": ..., "user_id": ...}
 
         # If enabled==True but no handles, skip
         if not handles:
@@ -159,17 +139,12 @@ def lambda_handler(event, context):
                 if not max_seen or int(tid) > int(max_seen):
                     max_seen = tid
 
-                # 2) Extract tickers (e.g. ["AAPL", "TSLA"])
+                # Extract tickers (e.g. ["AAPL", "TSLA"])
                 tickers = extract_tickers(txt)
                 if not tickers:
                     continue  # skip tweets with no $TICKER
 
-                # 3) Classify
-                category = classify_tweet(txt)  # "buy"/"sell"/"hold"
-                if category == "hold":
-                    continue  # skip storing holds
-
-                # 4) Write into TweetSignals
+                # Write raw signal into TweetSignals (no classification here)
                 item = {
                     "user_id": user_id,
                     "tweet_id": tid,
@@ -177,7 +152,6 @@ def lambda_handler(event, context):
                     "pub_date": pub,
                     "text": txt,
                     "tickers": tickers,
-                    "category": category,
                 }
                 try:
                     signals_tbl.put_item(Item=item)
