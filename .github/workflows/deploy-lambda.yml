@@ -43,6 +43,7 @@ jobs:
             public.ecr.aws/sam/build-python3.11:latest \
             /bin/bash -c "
               pip install --no-cache-dir \
+                numpy==2.2.0 \
                 cryptography \
                 bcrypt \
                 alpaca-py \
@@ -88,6 +89,7 @@ jobs:
             public.ecr.aws/sam/build-python3.11:latest \
             /bin/bash -c "
               pip install --no-cache-dir \
+                numpy==2.2.0 \
                 requests \
                 -t /opt/python \
               && find /opt/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
