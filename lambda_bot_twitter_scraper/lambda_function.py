@@ -17,11 +17,6 @@ state_tbl = ddb.Table(STATE_TABLE)
 signals_tbl = ddb.Table(SIGNALS_TABLE)
 
 
-def extract_tickers(text: str) -> list[str]:
-    """Return uppercase tickers found via $TICKER syntax."""
-    return [m.group(1).upper() for m in TICKER_RE.finditer(text)]
-
-
 def get_last_id(state_key: str) -> str | None:
     """
     Fetch the last seen tweet_id from TweetState for a given state_key.
