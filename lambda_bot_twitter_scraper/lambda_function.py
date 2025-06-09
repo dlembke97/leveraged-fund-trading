@@ -16,9 +16,6 @@ users_tbl = ddb.Table(USERS_TABLE)
 state_tbl = ddb.Table(STATE_TABLE)
 signals_tbl = ddb.Table(SIGNALS_TABLE)
 
-# ── RegEx pattern for extracting tickers ───────────────────────────
-TICKER_RE = re.compile(r"\$([A-Za-z]{1,5})")
-
 
 def extract_tickers(text: str) -> list[str]:
     """Return uppercase tickers found via $TICKER syntax."""
@@ -62,7 +59,7 @@ def fetch_twitter_items(twitter_user_id: str, since_id: str | None) -> list[dict
     }
     params = {
         "max_results": 5,  # up to 5 at a time (you can bump to 100)
-        "tweet.fields": "created_at,text",
+        "tweet.fields": "created_at,text,entities",
     }
     if since_id:
         params["since_id"] = since_id
@@ -134,13 +131,14 @@ def lambda_handler(event, context):
                 tid = entry["tweet_id"]
                 txt = entry["text"]
                 pub = entry["pub_date"]
-
+                cashtags = [
+                    c["tag"] for c in entry.get("entities", {}).get("cashtags", [])
+                ]
+                tickers = cashtags
                 # Update max_seen to the highest ID
                 if not max_seen or int(tid) > int(max_seen):
                     max_seen = tid
 
-                # Extract tickers (e.g. ["AAPL", "TSLA"])
-                tickers = extract_tickers(txt)
                 if not tickers:
                     continue  # skip tweets with no $TICKER
 
