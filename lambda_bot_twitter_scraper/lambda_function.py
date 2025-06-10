@@ -53,7 +53,7 @@ def fetch_twitter_items(twitter_user_id: str, since_id: str | None) -> list[dict
         "User-Agent": "v2UserTweetsPython",
     }
     params = {
-        "max_results": 5,  # up to 5 at a time (you can bump to 100)
+        "max_results": 1,  # up to 5 at a time (you can bump to 100)
         "tweet.fields": "created_at,text,entities",
     }
     if since_id:
