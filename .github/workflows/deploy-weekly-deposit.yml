@@ -30,20 +30,12 @@ jobs:
           python-version: '3.11.9'
 
       # ─── Layer: weekly-deposit-deps (alpaca-py) ─────────────────────────────
-      - name: Install weekly-deposit-deps layer dependencies (Amazon Linux 2)
+      - name: Install weekly-deposit-deps layer dependencies
         run: |
           python -m pip install --upgrade pip
           mkdir -p layer/python
-
-          docker run --rm \
-            -v "${{ github.workspace }}/layer/python":/opt/python \
-            public.ecr.aws/sam/build-python3.11:latest \
-            /bin/bash -c "
-              pip install --no-cache-dir \
-                alpaca-py \
-                -t /opt/python \
-              && find /opt/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
-            "
+          pip install --no-cache-dir alpaca-py -t layer/python
+          find layer/python -name '*.dist-info' -or -name '*.egg-info' | xargs rm -rf
 
       - name: Package weekly-deposit-deps layer
         run: |
