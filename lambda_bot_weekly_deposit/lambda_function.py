@@ -1,8 +1,9 @@
 import os
 import logging
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import CreateTransferRequest
-from alpaca.trading.enums import TransferDirection
+from alpaca.broker.client import BrokerClient
+from alpaca.broker.requests import CreateACHTransferRequest  # for ACH deposits
+from alpaca.broker.enums import TransferDirection, TransferTiming
+
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 API_KEY = os.getenv("APCA_API_KEY_ID")
@@ -18,15 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 def make_weekly_deposit():
-    client = TradingClient(API_KEY, API_SECRET, paper=False, account_id=ACCOUNT_ID)
+    broker_client = BrokerClient(API_KEY, API_SECRET, sandbox=False)
 
-    transfer_req = CreateTransferRequest(
+    ach_rels = broker_client.get_ach_relationships_for_account(ACCOUNT_ID)
+    rel_id = ach_rels[0].id  # pick the one you want
+    transfer_req = CreateACHTransferRequest(
         amount=DEPOSIT_AMOUNT,
         direction=TransferDirection.DEPOSIT,  # “deposit” for bank→Alpaca
+        timing=TransferTiming.NORMAL,
+        relationship_id=rel_id,
     )
 
     try:
-        transfer = client.transfers.create_transfer(transfer_req)
+        transfer = broker_client.create_transfer_for_account(ACCOUNT_ID, transfer_req)
         logger.info(f"Transfer requested: id={transfer.id}, status={transfer.status}")
     except Exception as e:
         logger.error(f"Failed to create transfer: {e}", exc_info=True)

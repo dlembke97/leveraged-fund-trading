@@ -30,7 +30,7 @@ jobs:
           python-version: '3.11.9'
 
       # ─── Layer: weekly-deposit-deps (alpaca-py) ─────────────────────────────
-      - name: Install trading-bot-deps layer dependencies (Amazon Linux 2)
+      - name: Install trading-bot-weekly-deps layer dependencies (Amazon Linux 2)
         run: |
           python -m pip install --upgrade pip
           mkdir -p layer/python
