@@ -122,7 +122,7 @@ jobs:
       # ─── Trading Lambda packaging & deploy ────────────────────────────────────────
 
       - name: Package Trading Lambda function code
-        run: zip -r function.zip lambda_bot
+        run: zip -r function.zip lambda_bot common
 
       - name: Update Trading Lambda function code
         run: |
@@ -155,7 +155,7 @@ jobs:
       - name: Package Twitter Scraper Lambda function code
         run: |
           cd lambda_bot_twitter_scraper
-          zip -r ../twitter_function.zip .
+          zip -r ../twitter_function.zip . ../common
 
       - name: Update Twitter Scraper Lambda function code
         run: |

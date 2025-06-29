@@ -4,6 +4,7 @@ import boto3
 import requests
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr
+from common.common_functions import EmailManager, setup_logger
 
 # ── Configuration from environment ────────────────────────────────
 USERS_TABLE = os.environ["USERS_TABLE"]  # e.g. "Users"
@@ -15,6 +16,8 @@ ddb = boto3.resource("dynamodb")
 users_tbl = ddb.Table(USERS_TABLE)
 state_tbl = ddb.Table(STATE_TABLE)
 signals_tbl = ddb.Table(SIGNALS_TABLE)
+
+logger = setup_logger("lambda_bot_twitter_scraper")
 
 
 def get_last_id(state_key: str) -> str | None:
@@ -129,6 +132,11 @@ def lambda_handler(event, context):
                 cashtags = [
                     c["tag"] for c in entry.get("entities", {}).get("cashtags", [])
                 ]
+
+                logger.info("Debugging entry: ", entry)
+                logger.info("Debugging txt: ", txt)
+                logger.info("Debugging cashtags: ", cashtags)
+
                 tickers = cashtags
                 # Update max_seen to the highest ID
                 if not max_seen or int(tid) > int(max_seen):
