@@ -18,19 +18,20 @@ logger = setup_logger("lambda_bot_weekly_deposit")
 
 
 def lambda_handler(event, context):
-    broker_client = BrokerClient(API_KEY, API_SECRET, sandbox=False)
+    logger.info("FULL ENV: %s", dict(os.environ))
+    # broker_client = BrokerClient(API_KEY, API_SECRET, sandbox=False)
 
-    ach_rels = broker_client.get_ach_relationships_for_account(ACCOUNT_ID)
-    rel_id = ach_rels[0].id  # pick the one you want
-    transfer_req = CreateACHTransferRequest(
-        amount=DEPOSIT_AMOUNT,
-        direction=TransferDirection.DEPOSIT,  # “deposit” for bank→Alpaca
-        timing=TransferTiming.NORMAL,
-        relationship_id=rel_id,
-    )
+    # ach_rels = broker_client.get_ach_relationships_for_account(ACCOUNT_ID)
+    # rel_id = ach_rels[0].id  # pick the one you want
+    # transfer_req = CreateACHTransferRequest(
+    #     amount=DEPOSIT_AMOUNT,
+    #     direction=TransferDirection.DEPOSIT,  # “deposit” for bank→Alpaca
+    #     timing=TransferTiming.NORMAL,
+    #     relationship_id=rel_id,
+    # )
 
     try:
-        transfer = broker_client.create_transfer_for_account(ACCOUNT_ID, transfer_req)
+        # transfer = broker_client.create_transfer_for_account(ACCOUNT_ID, transfer_req)
         logger.info(f"Transfer requested: id={transfer.id}, status={transfer.status}")
         return {"statusCode": 200, "body": "Deposit requested"}
     except Exception as e:
