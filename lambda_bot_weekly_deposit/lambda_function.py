@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
-def make_weekly_deposit():
+def make_weekly_deposit(event=None, context=None):
     broker_client = BrokerClient(API_KEY, API_SECRET, sandbox=False)
 
     ach_rels = broker_client.get_ach_relationships_for_account(ACCOUNT_ID)
@@ -33,6 +33,7 @@ def make_weekly_deposit():
     try:
         transfer = broker_client.create_transfer_for_account(ACCOUNT_ID, transfer_req)
         logger.info(f"Transfer requested: id={transfer.id}, status={transfer.status}")
+        return {"statusCode": 200, "body": "Deposit requested"}
     except Exception as e:
         logger.error(f"Failed to create transfer: {e}", exc_info=True)
 
