@@ -32,7 +32,7 @@ def lambda_handler(event, context):
 
     try:
         # transfer = broker_client.create_transfer_for_account(ACCOUNT_ID, transfer_req)
-        logger.info(f"Transfer requested: id={transfer.id}, status={transfer.status}")
+        # logger.info(f"Transfer requested: id={transfer.id}, status={transfer.status}")
         return {"statusCode": 200, "body": "Deposit requested"}
     except Exception as e:
         logger.error(f"Failed to create transfer: {e}", exc_info=True)
