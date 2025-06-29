@@ -90,7 +90,7 @@ jobs:
             echo "Attempt $i to update Weekly Deposit Lambda configuration..."
             if aws lambda update-function-configuration \
                  --function-name $WEEKLY_DEPOSIT_FUNCTION_NAME \
-                 --handler lambda_bot_weekly_deposit.lambda_function.make_weekly_deposit \
+                 --handler lambda_bot_weekly_deposit.lambda_function.lambda_handler \
                  --layers "$LAYER_ARN"; then
               echo "✔ Weekly Deposit Lambda config updated."
               break
