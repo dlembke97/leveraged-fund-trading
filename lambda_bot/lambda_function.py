@@ -3,6 +3,7 @@ import time
 import datetime
 from zoneinfo import ZoneInfo
 import re
+from decimal import Decimal, ROUND_DOWN
 
 import boto3
 from decimal import Decimal
@@ -260,61 +261,68 @@ def allocate_and_execute_sells(
     email_mgr: EmailManager,
     price: float,
 ):
-    """
-    (same as your original code; omitted for brevity)
-    """
     now = datetime.datetime.now(ZoneInfo("America/New_York"))
 
-    notional = Decimal(str(cfg.get("sell_notional", DEFAULT_NOTIONAL)))
-    shares_to_sell = float(notional / price) if price > 0 else 0.0
-    if shares_to_sell <= 0:
-        return  # nothing to sell
+    # 1) Work in Decimal space from the start
+    notional = cfg.get("sell_notional", DEFAULT_NOTIONAL)
+    if not isinstance(notional, Decimal):
+        notional = Decimal(str(notional))
+    price_dec = Decimal(str(price))
+    if price_dec <= 0:
+        return
 
+    # how many shares to sell (quantize to avoid insane precision)
+    shares_to_sell = (notional / price_dec).quantize(
+        Decimal("0.00000001"), rounding=ROUND_DOWN
+    )
+    if shares_to_sell <= 0:
+        return
+
+    # initialize your running totals as Decimal
+    total_sold_shares = Decimal("0")
+    total_LTCG_proceeds = Decimal("0")
+    total_STCG_proceeds = Decimal("0")
+
+    # make sure positions are populated
     positions = cfg.setdefault("positions", [])
     if not positions:
         positions[:] = sync_positions(
             trading_client, symbol, cfg.get("initial_lots", [])
         )
 
+    # build a FIFO list
     fifo_list = sorted(
         [(idx, lot["quantity"], lot["timestamp"]) for idx, lot in enumerate(positions)],
         key=lambda entry: datetime.datetime.fromisoformat(entry[2]),
     )
 
-    total_sold_shares = 0.0
-    total_LTCG_proceeds = Decimal("0.0")
-    total_STCG_proceeds = Decimal("0.0")
-
-    for idx, avail_qty, ts_iso in fifo_list:
+    for idx, avail_qty_f, ts_iso in fifo_list:
         if total_sold_shares >= shares_to_sell:
             break
 
         buy_ts = datetime.datetime.fromisoformat(ts_iso)
         age_days = (now - buy_ts).days
 
-        # If this lot is ST_near (inside buffer window), stop entirely
-        if (age_days >= (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)) and (
-            age_days < LONG_TERM_DAYS
-        ):
-            logger.info(
-                f"{symbol}: encountered ST_near lot (age {age_days} days). "
-                "Stopping further sells to avoid STCG."
-            )
+        # skip ST_near lots entirely
+        if (LONG_TERM_DAYS - LTCG_BUFFER_DAYS) <= age_days < LONG_TERM_DAYS:
+            logger.info(f"{symbol}: hit ST_near lot (age {age_days} days)—stopping.")
             break
 
-        # If this lot is LTCG (age ≥ LONG_TERM_DAYS) or ST_far (age < LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
-        if (age_days >= LONG_TERM_DAYS) or (
-            age_days < (LONG_TERM_DAYS - LTCG_BUFFER_DAYS)
-        ):
-            qty_left_to_sell = shares_to_sell - total_sold_shares
-            qty_from_this_lot = min(avail_qty, qty_left_to_sell)
-
-            if qty_from_this_lot <= 0:
+        # only sell from LTCG or ST_far
+        if age_days >= LONG_TERM_DAYS or age_days < (LONG_TERM_DAYS - LTCG_BUFFER_DAYS):
+            # convert available qty to Decimal
+            avail_qty = Decimal(str(avail_qty_f))
+            qty_left = shares_to_sell - total_sold_shares
+            qty_to_sell = min(avail_qty, qty_left).quantize(
+                Decimal("0.00000001"), rounding=ROUND_DOWN
+            )
+            if qty_to_sell <= 0:
                 continue
 
+            # submit the order (Alpaca wants a string)
             sell_req = MarketOrderRequest(
                 symbol=symbol,
-                qty=str(qty_from_this_lot),
+                qty=str(qty_to_sell),  # Decimal → str
                 side=OrderSide.SELL,
                 type=OrderType.MARKET,
                 time_in_force=TimeInForce.DAY,
@@ -327,25 +335,29 @@ def allocate_and_execute_sells(
                 order = trading_client.submit_order(sell_req)
             wait_for_fill(trading_client, order.id)
 
-            positions[idx]["quantity"] -= qty_from_this_lot
-            total_sold_shares += qty_from_this_lot
+            # update your in-memory float qty so sync_positions still works
+            positions[idx]["quantity"] = float(avail_qty - qty_to_sell)
 
-            proceeds = Decimal(str(qty_from_this_lot * price))
+            # and update your Decimal totals
+            total_sold_shares += qty_to_sell
+            proceeds = (qty_to_sell * price_dec).quantize(Decimal("0.01"))
             if age_days >= LONG_TERM_DAYS:
                 total_LTCG_proceeds += proceeds
             else:
                 total_STCG_proceeds += proceeds
 
+    # prune zero lots
     cfg["positions"] = [lot for lot in positions if lot.get("quantity", 0) > 0]
 
     if total_sold_shares == 0:
         email_mgr.send_trigger_alert(
-            f"{symbol} reached the sell threshold at price ${price:.2f}, "
-            "but no shares were sold because all lots are within the short-term buffer window."
+            f"{symbol} hit sell threshold ${price_dec} but skipped all shares (ST_near)."
         )
         return
 
-    total_proceeds = (Decimal(str(total_sold_shares * price))).quantize(Decimal("0.01"))
+    total_proceeds = (total_LTCG_proceeds + total_STCG_proceeds).quantize(
+        Decimal("0.01")
+    )
     sell_realloc = cfg.get("sell_reallocate", {"enabled": False})
     if sell_realloc.get("enabled", False):
         for tgt in sell_realloc.get("targets", []):
@@ -371,14 +383,11 @@ def allocate_and_execute_sells(
                 except Exception as e:
                     logger.error(f"Failed to re-invest into {tgt_ticker}: {e}")
 
-    skipped_shares = shares_to_sell - total_sold_shares
-    skipped_proceeds = Decimal(str(skipped_shares * price)).quantize(Decimal("0.01"))
-    cfg["last_sell_price"] = price
-
+    skipped = (shares_to_sell - total_sold_shares) * price_dec
     email_mgr.send_trigger_alert(
-        f"{symbol} sold ${total_proceeds:.2f} "
-        f"(LTCG=${total_LTCG_proceeds:.2f}, STCG=${total_STCG_proceeds:.2f}); "
-        f"skipped ${skipped_proceeds:.2f} due to ST_near lots"
+        f"{symbol} sold ${total_proceeds} "
+        f"(LTCG=${total_LTCG_proceeds}, STCG=${total_STCG_proceeds}); "
+        f"skipped ${skipped.quantize(Decimal('0.01'))}"
     )
 
 
