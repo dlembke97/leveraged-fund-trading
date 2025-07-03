@@ -133,9 +133,8 @@ def lambda_handler(event, context):
                     c["tag"] for c in entry.get("entities", {}).get("cashtags", [])
                 ]
                 print(entry)
-                logger.info("Debugging entry: ", entry)
-                logger.info("Debugging txt: ", txt)
-                logger.info("Debugging cashtags: ", cashtags)
+                print(txt)
+                print(cashtags)
 
                 tickers = cashtags
                 # Update max_seen to the highest ID
