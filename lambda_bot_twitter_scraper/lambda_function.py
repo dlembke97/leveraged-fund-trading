@@ -148,10 +148,10 @@ def lambda_handler(event, context):
                 item = {
                     "user_id": user_id,
                     "tweet_id": tid,
-                    "handle": handle,
-                    "pub_date": pub,
-                    "text": txt,
-                    "tickers": tickers,
+                    # "handle": handle,
+                    # "pub_date": pub,
+                    # "text": txt,
+                    # "tickers": tickers,
                 }
                 try:
                     signals_tbl.put_item(Item=item)
