@@ -3,7 +3,7 @@ import boto3
 import requests
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Attr
-from common.common_functions import EmailManager, setup_logger
+from common import EmailManager, setup_logger
 
 # ── Configuration from environment ────────────────────────────────
 USERS_TABLE = os.environ["USERS_TABLE"]  # e.g. "Users"
