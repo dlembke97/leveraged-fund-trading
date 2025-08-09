@@ -21,7 +21,7 @@ from alpaca.data.timeframe import TimeFrame as DataTimeFrame
 
 import pandas_market_calendars as mcal
 
-from common.common_functions import EmailManager, setup_logger
+from common import EmailManager, setup_logger
 
 # ─── Anthropic imports & setup ─────────────────────────────────────────────
 import anthropic
