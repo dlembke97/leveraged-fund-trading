@@ -1,5 +1,4 @@
 import os
-import re
 import boto3
 import requests
 from botocore.exceptions import ClientError
@@ -83,6 +82,8 @@ def fetch_twitter_items(twitter_user_id: str, since_id: str | None) -> list[dict
                 "tweet_id": tweet["id"],
                 "pub_date": tweet.get("created_at", ""),
                 "text": tweet.get("text", ""),
+                # Include entities so we can extract cashtags later
+                "entities": tweet.get("entities", {}),
             }
         )
     return items
@@ -132,10 +133,6 @@ def lambda_handler(event, context):
                 cashtags = [
                     c["tag"] for c in entry.get("entities", {}).get("cashtags", [])
                 ]
-                print(entry)
-                print(txt)
-                print(cashtags)
-
                 tickers = cashtags
                 # Update max_seen to the highest ID
                 if not max_seen or int(tid) > int(max_seen):
@@ -148,10 +145,11 @@ def lambda_handler(event, context):
                 item = {
                     "user_id": user_id,
                     "tweet_id": tid,
-                    # "handle": handle,
-                    # "pub_date": pub,
-                    # "text": txt,
-                    # "tickers": tickers,
+                    "handle": handle,
+                    "pub_date": pub,
+                    # Strip any NULL chars from tweet text to keep DynamoDB happy
+                    "text": txt.replace("\x00", ""),
+                    "tickers": tickers,
                 }
                 try:
                     signals_tbl.put_item(Item=item)
